@@ -1,59 +1,67 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import MessageList from "./MessageList";
+import InputBox from "./InputBox";
+import SendButton from "./SendButton";
 
 function App() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const handleSend = async () => {
+  // ★ useCallback で関数を安定化（子に渡すため）
+  const handleSend = useCallback(async () => {
     if (!input.trim()) return;
 
     setLoading(true);
-    setMessages((prev) => [...prev, `あなた: ${input}`]);
+    setMessages((prev) => [...prev, `あなた: ${input}`, "AI: "]);
 
     try {
-      const res = await fetch("http://localhost:3000/api/chat", {
+      const res = await fetch("http://localhost:3000/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: input }),
       });
-      const data = await res.json();
-      setMessages((prev) => [...prev, `AI: ${data.text}`]);
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let aiText = "";
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          aiText += decoder.decode(value, { stream: true });
+
+          setMessages((prev) => {
+            const updated = [...prev];
+            updated[updated.length - 1] = `AI: ${aiText}`;
+            return updated;
+          });
+        }
+      }
     } catch (error) {
-      setMessages((prev) => [...prev, "AI: エラーが発生しました"]);
+      setMessages((prev) => {
+        const updated = [...prev];
+        updated[updated.length - 1] = "AI: エラーが発生しました";
+        return updated;
+      });
       console.error(error);
     }
 
     setInput("");
     setLoading(false);
-  };
+  }, [input]);
 
   return (
     <div style={{ padding: "20px", fontFamily: "sans-serif" }}>
       <h1>AI Chat App</h1>
 
-      <div
-        style={{
-          border: "1px solid #ccc",
-          padding: "10px",
-          minHeight: "200px",
-          marginBottom: "10px",
-        }}
-      >
-        {messages.map((msg, i) => (
-          <p key={i}>{msg}</p>
-        ))}
-      </div>
+      <MessageList messages={messages} />
 
-      <input
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        placeholder="質問を入力..."
-        style={{ width: "300px", marginRight: "10px" }}
-      />
-      <button onClick={handleSend} disabled={loading}>
-        {loading ? "送信中..." : "送信"}
-      </button>
+      <InputBox input={input} setInput={setInput} />
+
+      <SendButton onSend={handleSend} loading={loading} />
     </div>
   );
 }

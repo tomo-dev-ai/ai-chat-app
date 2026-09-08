@@ -37,6 +37,38 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
+app.post("/api/chat/stream", async (req, res) => {
+  const prompt = req.body.prompt;
+
+  // ★最初に1回だけヘッダー設定（ストリーミングは text/plain）
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+
+  // ★空チェック（JSONではなくテキストで返す）
+  if (!prompt || !prompt.trim()) {
+    res.write("プロンプトが空です。");
+    return res.end();
+  }
+
+  try {
+    const response = await ai.models.generateContentStream({
+      model: "gemini-3.5-flash-lite",
+      contents: prompt,
+    });
+
+    for await (const chunk of response) {
+      if (chunk.text) {
+        res.write(chunk.text);
+      }
+    }
+
+    res.end();
+  } catch (err) {
+    console.error(err);
+    res.write("エラーが発生しました。");
+    res.end();
+  }
+});
+
 app.listen(3000, () => {
   console.log("Server running on http://localhost:3000");
 });
