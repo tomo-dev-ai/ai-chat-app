@@ -1,3 +1,4 @@
+import type { Message } from "./message";
 import { useState, useCallback } from "react";
 import MessageList from "./MessageList";
 import InputBox from "./InputBox";
@@ -5,53 +6,63 @@ import SendButton from "./SendButton";
 
 function App() {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<string[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
 
   // ★ useCallback で関数を安定化（子に渡すため）
-  const handleSend = useCallback(async () => {
-    if (!input.trim()) return;
+const handleSend = useCallback(async () => {
+  if (!input.trim()) return;
 
-    setLoading(true);
-    setMessages((prev) => [...prev, `あなた: ${input}`, "AI: "]);
+  setLoading(true);
 
-    try {
-      const res = await fetch("http://localhost:3000/api/chat/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: input }),
-      });
+  const newUserMessage: Message = { role: "user", content: input };
 
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let aiText = "";
+  // 今回のユーザー発言を含めた、サーバーに送る会話履歴
+  const historyToSend = [...messages, newUserMessage];
 
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+  // 画面表示用：ユーザー発言 + AI応答の空枠を追加
+  setMessages(prev => [
+    ...prev,
+    newUserMessage,
+    { role: "assistant", content: "" }
+  ]);
 
-          aiText += decoder.decode(value, { stream: true });
+  try {
+    const res = await fetch("http://localhost:3000/api/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ history: historyToSend }),
+    });
 
-          setMessages((prev) => {
-            const updated = [...prev];
-            updated[updated.length - 1] = `AI: ${aiText}`;
-            return updated;
-          });
-        }
+    const reader = res.body?.getReader();
+    const decoder = new TextDecoder("utf-8");
+
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+
+        setMessages(prev => {
+          const last = prev[prev.length - 1];
+          const updatedLast = { ...last, content: last.content + chunk };
+          return [...prev.slice(0, -1), updatedLast];
+        });
       }
-    } catch (error) {
-      setMessages((prev) => {
-        const updated = [...prev];
-        updated[updated.length - 1] = "AI: エラーが発生しました";
-        return updated;
-      });
-      console.error(error);
     }
+  } catch (error) {
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      const updatedLast = { ...last, content: "エラーが発生しました" };
+      return [...prev.slice(0, -1), updatedLast];
+    });
+    console.error(error);
+  }
 
-    setInput("");
-    setLoading(false);
-  }, [input]);
+  setInput("");
+  setLoading(false);
+}, [input, messages]);
 
   return (
     <div style={{ padding: "20px", fontFamily: "sans-serif" }}>

@@ -1,23 +1,29 @@
-import ReactMarkdown from "react-markdown";
-import { memo } from "react";
+import type { Message } from "./message";
 
-const MessageList = memo(({ messages }: { messages: string[] }) => {
-  console.log("MessageList rendered"); // デバッグ用
+type Props = {
+  messages: Message[];
+};
 
+function MessageList({ messages }: Props) {
   return (
-    <div
-      style={{
-        border: "1px solid #ccc",
-        padding: "10px",
-        minHeight: "200px",
-        marginBottom: "10px",
-      }}
-    >
-      {messages.map((msg, i) => (
-        <ReactMarkdown key={i}>{msg}</ReactMarkdown>
+    <div style={{ marginBottom: "20px" }}>
+      {messages.map((msg, idx) => (
+        <div
+          key={idx}
+          style={{
+            margin: "8px 0",
+            padding: "10px",
+            borderRadius: "6px",
+            background: msg.role === "user" ? "#e0f7fa" : "#f1f8e9",
+            textAlign: msg.role === "user" ? "right" : "left",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {msg.content}
+        </div>
       ))}
     </div>
   );
-});
+}
 
 export default MessageList;
