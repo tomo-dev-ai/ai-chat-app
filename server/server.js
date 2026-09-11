@@ -4,7 +4,8 @@ import cors from "cors";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
-dotenv.config();
+// 実行時のカレントディレクトリに関わらず、必ず server/.env を読み込む
+dotenv.config({ path: new URL(".env", import.meta.url) });
 
 const app = express();
 app.use(cors());
@@ -38,46 +39,10 @@ app.post("/api/chat", async (req, res) => {
 });
 
 const SYSTEM_PROMPT = `あなたはReact/TypeScriptを学習しているエンジニアの学習をサポートするAIアシスタントです。
-専門的な内容もわかりやすく、簡潔に説明してください。`;
+専門的な内容もわかりやすく、簡潔に説明してください。
 
-app.post("/api/chat/stream", async (req, res) => {
-  const history = req.body.history;
-
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-
-  if (!Array.isArray(history) || history.length === 0) {
-    res.write("会話履歴が空です。");
-    return res.end();
-  }
-
-  // Message[] 形式(role: "user" | "assistant") を Gemini の contents 形式に変換
-  const contents = history.map((msg) => ({
-    role: msg.role === "assistant" ? "model" : "user",
-    parts: [{ text: msg.content }],
-  }));
-
-  try {
-    const response = await ai.models.generateContentStream({
-      model: "gemini-3.5-flash-lite",
-      contents,
-      config: {
-        systemInstruction: SYSTEM_PROMPT,
-      },
-    });
-
-    for await (const chunk of response) {
-      if (chunk.text) {
-        res.write(chunk.text);
-      }
-    }
-
-    res.end();
-  } catch (err) {
-    console.error(err);
-    res.write("エラーが発生しました。");
-    res.end();
-  }
-});
+関数(ツール)を実行した場合、その実行結果(functionResponse)は必ず事実として扱ってください。
+「リアルタイム情報にはアクセスできない」のような拒否はせず、関数が返した値をそのまま使って具体的に回答してください。`;
 
 // ==== function calling 用の関数定義 ====
 
@@ -109,6 +74,15 @@ const AVAILABLE_FUNCTIONS = {
   getWeather,
 };
 
+// 1ターンあたりのfunction call実行回数の上限(無限ループ防止)
+const MAX_FUNCTION_CALLS = 2;
+
+// ストリーミング中にfunction call実行をフロントエンドへ通知するための簡易マーカー。
+// NUL文字はLLMの通常のテキスト出力に現れないため、区切り文字として利用する。
+function toolCallMarker(name) {
+  return `\u0000TOOL_CALL:${name}\u0000`;
+}
+
 // ==== ログ・コスト管理(usageMetadataベース) ====
 
 // gemini-3.5-flash-lite の料金(100万トークンあたりのUSD、2026年9月時点)
@@ -131,10 +105,116 @@ function calculateCost(usageMetadata) {
 function logUsage(label, usageMetadata) {
   const cost = calculateCost(usageMetadata);
   console.log(
-    `[/api/fc] [${label}] input:${cost.inputTokens} output:${cost.outputTokens} cost:$${cost.totalCostUSD.toFixed(6)}`
+    `[${label}] input:${cost.inputTokens} output:${cost.outputTokens} cost:$${cost.totalCostUSD.toFixed(6)}`
   );
   return cost;
 }
+
+app.post("/api/chat/stream", async (req, res) => {
+  const history = req.body.history;
+
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+
+  if (!Array.isArray(history) || history.length === 0) {
+    res.write("会話履歴が空です。");
+    return res.end();
+  }
+
+  // Message[] 形式(role: "user" | "assistant") を Gemini の contents 形式に変換。
+  // この配列はターン内でのみ書き換える(functionCall/functionResponseの
+  // 中間ステップを会話履歴として保存しないため、historyそのものは変更しない)。
+  let contents = history.map((msg) => ({
+    role: msg.role === "assistant" ? "model" : "user",
+    parts: [{ text: msg.content }],
+  }));
+
+  try {
+    let functionCallCount = 0;
+
+    // function calling 判定・実行ループ(最大 MAX_FUNCTION_CALLS 回)
+    while (functionCallCount < MAX_FUNCTION_CALLS) {
+      // 非ストリーミングで1回実行し、functionCallの有無だけを判定する
+      const judge = await ai.models.generateContent({
+        model: "gemini-3.5-flash-lite",
+        contents,
+        config: {
+          systemInstruction: SYSTEM_PROMPT,
+          tools: [{ functionDeclarations: FUNCTION_DECLARATIONS }],
+        },
+      });
+
+      logUsage(
+        `/api/chat/stream 判定${functionCallCount + 1}回目`,
+        judge.usageMetadata
+      );
+
+      const functionCalls = judge.functionCalls;
+      if (!functionCalls || functionCalls.length === 0) {
+        // function call不要 → このまま通常のストリーミング応答へ進む
+        break;
+      }
+
+      const fc = functionCalls[0];
+      const fn = AVAILABLE_FUNCTIONS[fc.name];
+      const functionResult = fn
+        ? await fn(fc.args?.city)
+        : `未知の関数です: ${fc.name}`;
+
+      functionCallCount++;
+
+      // フロントエンドへ「ツール実行中」を通知(本文とは別マーカーとして送信)
+      res.write(toolCallMarker(fc.name));
+
+      // モデルの返答内容(functionCallを含む)をターン内のcontentsにのみ積む
+      const modelContent = judge.candidates[0].content;
+      contents = [
+        ...contents,
+        modelContent,
+        {
+          role: "user",
+          parts: [
+            {
+              functionResponse: {
+                name: fc.name,
+                response: { result: functionResult },
+              },
+            },
+          ],
+        },
+      ];
+    }
+
+    // 最終回答をストリーミング。上限到達時はtoolsを渡さず、
+    // ここまでのfunctionResponseを踏まえたテキスト回答を強制する。
+    const stream = await ai.models.generateContentStream({
+      model: "gemini-3.5-flash-lite",
+      contents,
+      config: {
+        systemInstruction: SYSTEM_PROMPT,
+      },
+    });
+
+    let streamUsage = null;
+    for await (const chunk of stream) {
+      if (chunk.usageMetadata) {
+        streamUsage = chunk.usageMetadata;
+      }
+      if (chunk.text) {
+        res.write(chunk.text);
+      }
+    }
+
+    if (streamUsage) {
+      logUsage("/api/chat/stream ストリーミング(最終回答)", streamUsage);
+    }
+
+    res.end();
+  } catch (err) {
+    console.error(err);
+    res.write("エラーが発生しました。");
+    res.end();
+  }
+});
 
 app.post("/api/fc", async (req, res) => {
   console.log("=== /api/fc が呼ばれました ===", req.body);
@@ -161,7 +241,7 @@ app.post("/api/fc", async (req, res) => {
       },
     });
 
-    const cost1 = logUsage("1回目(functionCall判定)", first.usageMetadata);
+    const cost1 = logUsage("/api/fc 1回目(functionCall判定)", first.usageMetadata);
 
     const functionCalls = first.functionCalls;
 
@@ -207,7 +287,7 @@ app.post("/api/fc", async (req, res) => {
       },
     });
 
-    const cost2 = logUsage("2回目(最終回答)", final.usageMetadata);
+    const cost2 = logUsage("/api/fc 2回目(最終回答)", final.usageMetadata);
     const totalCostUSD = cost1.totalCostUSD + cost2.totalCostUSD;
 
     console.log(`[/api/fc] 合計コスト(USD): ${totalCostUSD.toFixed(6)}`);

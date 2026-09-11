@@ -4,16 +4,22 @@ import MessageList from "./MessageList";
 import InputBox from "./InputBox";
 import SendButton from "./SendButton";
 
+// サーバー(/api/chat/stream)がfunction call実行中に流す簡易マーカー。
+// NUL文字で区切ることで通常のAI応答テキストと衝突しないようにしている。
+const TOOL_CALL_MARKER_REGEX = /\u0000TOOL_CALL:([^\u0000]*)\u0000/g;
+
 function App() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+  const [toolStatus, setToolStatus] = useState<string | null>(null);
 
   // ★ useCallback で関数を安定化（子に渡すため）
 const handleSend = useCallback(async () => {
   if (!input.trim()) return;
 
   setLoading(true);
+  setToolStatus(null);
 
   const newUserMessage: Message = { role: "user", content: input };
 
@@ -44,11 +50,21 @@ const handleSend = useCallback(async () => {
 
         const chunk = decoder.decode(value, { stream: true });
 
-        setMessages(prev => {
-          const last = prev[prev.length - 1];
-          const updatedLast = { ...last, content: last.content + chunk };
-          return [...prev.slice(0, -1), updatedLast];
-        });
+        // ツール実行中マーカーを本文から取り除き、状態表示だけ更新する
+        const toolCallMatches = [...chunk.matchAll(TOOL_CALL_MARKER_REGEX)];
+        const visibleText = chunk.replace(TOOL_CALL_MARKER_REGEX, "");
+
+        if (visibleText) {
+          // 実テキストが届いたらツール実行中表示は消す
+          setToolStatus(null);
+          setMessages(prev => {
+            const last = prev[prev.length - 1];
+            const updatedLast = { ...last, content: last.content + visibleText };
+            return [...prev.slice(0, -1), updatedLast];
+          });
+        } else if (toolCallMatches.length > 0) {
+          setToolStatus(toolCallMatches[toolCallMatches.length - 1][1]);
+        }
       }
     }
   } catch (error) {
@@ -60,6 +76,7 @@ const handleSend = useCallback(async () => {
     console.error(error);
   }
 
+  setToolStatus(null);
   setInput("");
   setLoading(false);
 }, [input, messages]);
@@ -69,6 +86,12 @@ const handleSend = useCallback(async () => {
       <h1>AI Chat App</h1>
 
       <MessageList messages={messages} />
+
+      {toolStatus && (
+        <div style={{ color: "#888", fontStyle: "italic", marginBottom: "10px" }}>
+          🔧 ツール実行中 ({toolStatus})
+        </div>
+      )}
 
       <InputBox input={input} setInput={setInput} />
 
