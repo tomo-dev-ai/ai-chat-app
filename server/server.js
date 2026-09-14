@@ -15,6 +15,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 app.post("/api/chat", async (req, res) => {
   const prompt = req.body.prompt;
+  console.log("APIキー:", process.env.GEMINI_API_KEY); // ← この1行を追加(テスト用)
 
   if (!prompt) {
     return res.status(400).json({ text: "プロンプトが空です。" });
