@@ -1,10 +1,15 @@
 // server/rag-prototype.js
 //
 // 目的:
-// Embedding(文章のベクトル化)とコサイン類似度による検索(Semantic Search)を
-// 最小構成で体験するための実験スクリプト。
-// 「質問に関連する文書を探す」部分(Retrieval)だけを動かして仕組みを体感する回。
-// 検索結果をLLMに渡して回答を生成させる部分(Generation)は、次回以降に追加する。
+// Embedding(文章のベクトル化)とコサイン類似度による検索(Retrieval)に加えて、
+// 検索結果をGeminiに渡して実際に回答させる(Generation)ところまでを、
+// 最小構成で体験する実験スクリプト。
+//
+// 「関連資料が見つかったかどうか」の判定は、以下の2段構えにしている。
+//   1. 1位の絶対スコアが低い(MIN_SCORE未満) → そもそも関連資料なし → 正直に「わからない」
+//   2. 1位のスコアは十分高いが、1位と2位が僅差(GAP_THRESHOLD未満) → 複数の資料が同程度に
+//      関連している可能性がある → 1位を根拠に回答はするが、その旨を注記する
+// (差だけで判定すると、「全部無関係で団子」と「全部関連していて団子」を区別できないため)
 
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
@@ -31,8 +36,18 @@ const DOCUMENTS = [
   },
 ];
 
-// テストしたい質問文(ここを書き換えて、いろいろな聞き方を試してみてください)
+// テストしたい質問文(ここを書き換えて、いろいろな聞き方を試してみてください。
+// 資料に全く関係ない質問(例:「今日の天気は?」)に変えると、
+// 「わからない」の分岐がどう動くかも確認できます)
 const QUERY = "エンコーディングの不具合の原因は何でしたか?";
+
+// 1位のスコアがこれ未満なら、そもそも関連資料がないとみなす暫定値。
+// 今日実際に取れた2パターン(関連質問:1位0.6005 / 無関係質問:1位0.5113)の間を取った値。
+// まだサンプルが2件しかないため、今後実データが増えたら調整が必要。
+const MIN_SCORE = 0.55;
+
+// 1位と2位のスコア差がこれ未満なら「複数の資料が同程度に関連しているかもしれない」とみなす暫定値。
+const GAP_THRESHOLD = 0.03;
 
 // 2つのベクトルの類似度を -1〜1 で返す(1に近いほど意味が近い)
 function cosineSimilarity(vecA, vecB) {
@@ -51,9 +66,29 @@ async function embed(text) {
   return result.embeddings[0].values;
 }
 
+// 採用した資料だけを根拠に、Geminiに回答を生成させる(RAGのGeneration部分)
+async function generateAnswer(query, contextDoc) {
+  const prompt = `以下の資料だけを根拠に、質問に日本語で簡潔に答えてください。
+資料に書かれていないことは、推測で答えずに「資料からはわかりません」と正直に答えてください。
+
+【資料】
+${contextDoc.text}
+
+【質問】
+${query}`;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3.5-flash-lite",
+    contents: prompt,
+  });
+
+  return response.text;
+}
+
 async function main() {
   console.log(`質問: ${QUERY}\n`);
 
+  // ---- Retrieval: 質問に近い資料を探す ----
   const queryVector = await embed(QUERY);
 
   const scored = [];
@@ -69,6 +104,32 @@ async function main() {
   for (const doc of scored) {
     console.log(`[${doc.score.toFixed(4)}] ${doc.id}: ${doc.text.slice(0, 40)}...`);
   }
+
+  const [top, second] = scored;
+  const gap = second ? top.score - second.score : Infinity;
+  console.log(`\n1位のスコア: ${top.score.toFixed(4)}(下限: ${MIN_SCORE})`);
+  console.log(`1位と2位のスコア差: ${gap.toFixed(4)}(閾値: ${GAP_THRESHOLD})`);
+
+  // ---- 1. 1位のスコア自体が低い → そもそも関連資料がない ----
+  if (top.score < MIN_SCORE) {
+    console.log("\n=== 回答 ===");
+    console.log("関連する資料が見つかりませんでした。質問を具体的にしてみてください。");
+    return;
+  }
+
+  // ---- 2. 1位は十分高いが、僅差 → 複数候補がある旨を注記(回答は続行) ----
+  if (gap < GAP_THRESHOLD) {
+    console.log(
+      "\n(注記:上位の資料同士のスコアが僅差でした。複数の資料が同程度に関連している可能性があります。今回は最上位の資料のみを根拠にしています)"
+    );
+  }
+
+  // ---- Generation: 採用した資料を根拠にGeminiへ回答させる ----
+  console.log(`\n採用した資料: ${top.id}`);
+  const answer = await generateAnswer(QUERY, top);
+
+  console.log("\n=== 回答 ===");
+  console.log(answer);
 }
 
 main().catch((err) => {
