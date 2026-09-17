@@ -1,14 +1,27 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useReducer, useRef, useState } from "react";
 import CheckboxField from "./CheckboxField";
 
 const MessageContext = createContext<string>("");
+
+type FormState = { message: string; submitCount: number };
+type FormAction = { type: "error"; message: string } | { type: "success" };
+
+function reducer(state: FormState, action: FormAction): FormState {
+    switch (action.type) {
+        case "error":
+            return { message: action.message, submitCount: state.submitCount };
+        case "success":
+            const newSubmitCount = state.submitCount + 1;
+            return { message: "送信しました", submitCount: newSubmitCount };
+    }
+}
 
 function Test() {
 
     const [name, setName] = useState("");
     const [isCheck, setIsCheck] = useState(false);
-    const [message, setMessage] = useState("");
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
+    const [formState, dispatch] = useReducer(reducer, { message: "", submitCount: 0 });
 
     useEffect(() => {
         console.log(`名前が${name.length}文字になりました`);
@@ -26,18 +39,20 @@ function Test() {
 
 
     const handleSend = (e: React.SubmitEvent<HTMLFormElement>) => {
-        setMessage("");
         e.preventDefault();
 
         if (!name) {
-            setMessage("名前を入力してください");
+            // setMessage("名前を入力してください");
+            dispatch({ type: "error", message: "名前を入力してください" });
             return;
         } else if (!isCheck) {
-            setMessage("利用規約に同意のチェックが入っていません");
+            // setMessage("利用規約に同意のチェックが入っていません");
+            dispatch({ type: "error", message: "利用規約に同意のチェックが入っていません" });
             return;
         }
 
-        setMessage("送信しました");
+        // setMessage("送信しました");
+        dispatch({ type: "success" });
         nameInputRef.current?.focus()
     }
 
@@ -54,7 +69,7 @@ function Test() {
                 <CheckboxField checked={isCheck} onChange={setIsCheck} label="利用規約に同意する" />
                 <br></br>
                 <button type="submit">送信</button>
-                <MessageContext.Provider value={message}>
+                <MessageContext.Provider value={formState.message}>
                     <Wrapper />
                 </MessageContext.Provider>
                 <p>経過時間: {elapsedSeconds}秒</p>
