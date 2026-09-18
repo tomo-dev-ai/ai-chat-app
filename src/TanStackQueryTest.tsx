@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router";
 import {
   QueryClient,
   QueryClientProvider,
@@ -87,13 +88,44 @@ function UserList() {
   const addUser = useAddUser();
   const [name, setName] = useState("");
 
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sort = searchParams.get("sort") || "asc";
+
   if (isLoading) return <p>読み込み中...</p>;
   if (error) return <p>エラーが発生しました</p>;
 
+  const sortedUsers = users
+    ? [...users].sort((a, b) =>
+      sort === "asc"
+        ? a.name.localeCompare(b.name)
+        : b.name.localeCompare(a.name)
+    )
+    : users;
+
   return (
     <div className="border border-gray-300 rounded-lg p-4 mb-4 bg-white">
+      <div className="flex gap-2 mb-3">
+        <button
+          onClick={() => setSearchParams({ sort: "asc" })}
+          className={`px-3 py-1 rounded-md text-sm ${sort === "asc"
+              ? "bg-blue-100 text-blue-700 font-bold"
+              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+        >
+          昇順
+        </button>
+        <button
+          onClick={() => setSearchParams({ sort: "desc" })}
+          className={`px-3 py-1 rounded-md text-sm ${sort === "desc"
+              ? "bg-blue-100 text-blue-700 font-bold"
+              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+        >
+          降順
+        </button>
+      </div>
       <ul className="mb-3 space-y-1">
-        {users?.map((u) => (
+        {sortedUsers?.map((u) => (
           <li key={u.id} className="px-2 py-1 bg-gray-50 rounded">
             {u.name}
           </li>
