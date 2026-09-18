@@ -10,8 +10,8 @@ import Test from './Test.tsx'
 // ★ 今は App を表示しているが、必要に応じて切り替える
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {/* <App /> */}
+    <App />
     {/* <StructuredTest /> ← これを有効にすると JSONテスト画面になる */}
-    <Test />
+    {/* <Test /> */}
   </StrictMode>,
 )

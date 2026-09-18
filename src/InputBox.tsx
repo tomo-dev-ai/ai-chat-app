@@ -10,7 +10,7 @@ function InputBox({
       value={input}
       onChange={(e) => setInput(e.target.value)}
       placeholder="質問を入力..."
-      style={{ width: "300px", marginRight: "10px" }}
+      className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
     />
   );
 }

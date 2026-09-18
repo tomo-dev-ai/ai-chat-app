@@ -6,18 +6,15 @@ type Props = {
 
 function MessageList({ messages }: Props) {
   return (
-    <div style={{ marginBottom: "20px" }}>
+    <div className="flex flex-col gap-2 mb-5 max-h-[400px] overflow-y-auto">
       {messages.map((msg, idx) => (
         <div
           key={idx}
-          style={{
-            margin: "8px 0",
-            padding: "10px",
-            borderRadius: "6px",
-            background: msg.role === "user" ? "#e0f7fa" : "#f1f8e9",
-            textAlign: msg.role === "user" ? "right" : "left",
-            whiteSpace: "pre-wrap",
-          }}
+          className={`max-w-[75%] px-4 py-2 rounded-lg whitespace-pre-wrap ${
+            msg.role === "user"
+              ? "self-end bg-blue-100 text-right"
+              : "self-start bg-green-50 text-left"
+          }`}
         >
           {msg.content}
         </div>
