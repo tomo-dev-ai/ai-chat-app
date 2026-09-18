@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useReducer, useRef, useState } from "react";
 import CheckboxField from "./CheckboxField";
+import useElapsedSeconds from "./useElapsedSeconds";
 
 const MessageContext = createContext<string>("");
 
@@ -20,38 +21,26 @@ function Test() {
 
     const [name, setName] = useState("");
     const [isCheck, setIsCheck] = useState(false);
-    const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [formState, dispatch] = useReducer(reducer, { message: "", submitCount: 0 });
 
     useEffect(() => {
         console.log(`名前が${name.length}文字になりました`);
     }, [name]);
 
-    useEffect(() => {
-        const timer = setInterval(() => {
-            setElapsedSeconds(prev => prev + 1);
-        }, 1000);
-
-        return () => clearInterval(timer); // クリーンアップ
-    }, []);
-
     const nameInputRef = useRef<HTMLInputElement>(null);
-
+    const elapsedSeconds = useElapsedSeconds();
 
     const handleSend = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
 
         if (!name) {
-            // setMessage("名前を入力してください");
             dispatch({ type: "error", message: "名前を入力してください" });
             return;
         } else if (!isCheck) {
-            // setMessage("利用規約に同意のチェックが入っていません");
             dispatch({ type: "error", message: "利用規約に同意のチェックが入っていません" });
             return;
         }
 
-        // setMessage("送信しました");
         dispatch({ type: "success" });
         nameInputRef.current?.focus()
     }
