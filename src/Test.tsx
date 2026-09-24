@@ -2,18 +2,18 @@ import { createContext, useContext, useEffect, useReducer, useRef, useState } fr
 import CheckboxField from "./CheckboxField";
 import useElapsedSeconds from "./useElapsedSeconds";
 
-const MessageContext = createContext<string>("");
+type FormState = { message: string; submitCount: number; isError: boolean };
 
-type FormState = { message: string; submitCount: number };
+const MessageContext = createContext<FormState>({ message: "", submitCount: 0, isError: false });
 type FormAction = { type: "error"; message: string } | { type: "success" };
 
 function reducer(state: FormState, action: FormAction): FormState {
     switch (action.type) {
         case "error":
-            return { message: action.message, submitCount: state.submitCount };
+            return { message: action.message, submitCount: state.submitCount, isError: true };
         case "success":
             const newSubmitCount = state.submitCount + 1;
-            return { message: "送信しました", submitCount: newSubmitCount };
+            return { message: "送信しました", submitCount: newSubmitCount, isError: false };
     }
 }
 
@@ -21,7 +21,7 @@ function Test() {
 
     const [name, setName] = useState("");
     const [isCheck, setIsCheck] = useState(false);
-    const [formState, dispatch] = useReducer(reducer, { message: "", submitCount: 0 });
+    const [formState, dispatch] = useReducer(reducer, { message: "", submitCount: 0, isError: false });
 
     useEffect(() => {
         console.log(`名前が${name.length}文字になりました`);
@@ -46,25 +46,33 @@ function Test() {
     }
 
     return (
-        <div>
-            <form onSubmit={handleSend}>
-                <input
-                    ref={nameInputRef}
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                />
-                <br></br>
+        <div className="p-6 max-w-md text-left">
+            <h2 className="text-xl font-bold mb-4">フォームの練習(第9〜15章)</h2>
+            <form onSubmit={handleSend} className="flex flex-col gap-3 bg-white border border-gray-200 rounded-lg p-4">
+                <label className="flex flex-col gap-1 text-sm">
+                    名前
+                    <input
+                        ref={nameInputRef}
+                        type="text"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="名前を入力"
+                        className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                </label>
                 <CheckboxField checked={isCheck} onChange={setIsCheck} label="利用規約に同意する" />
-                <br></br>
-                <button type="submit">送信</button>
-                <MessageContext.Provider value={formState.message}>
+                <button
+                    type="submit"
+                    className="self-start bg-blue-500 text-white px-4 py-2 rounded-md font-medium hover:bg-blue-600"
+                >
+                    送信
+                </button>
+                <MessageContext.Provider value={formState}>
                     <Wrapper />
                 </MessageContext.Provider>
-                <p>経過時間: {elapsedSeconds}秒</p>
+                <p className="text-xs text-gray-500">経過時間: {elapsedSeconds}秒</p>
             </form>
         </div>
-
     );
 }
 export default Test;
@@ -76,6 +84,17 @@ function Wrapper() {
 
 // 実際にmessageを表示するコンポーネント
 function MessageDisplay() {
-    const message = useContext(MessageContext);
-    return <p>{message}</p>;
+    const { message, isError } = useContext(MessageContext);
+    if (!message) return null;
+
+    // エラーは赤、成功は緑で表示する。
+    // role="alert" はスクリーンリーダーにエラーをすぐ読み上げさせるための指定
+    return (
+        <p
+            role={isError ? "alert" : "status"}
+            className={`text-sm ${isError ? "text-red-600" : "text-green-600"}`}
+        >
+            {message}
+        </p>
+    );
 }

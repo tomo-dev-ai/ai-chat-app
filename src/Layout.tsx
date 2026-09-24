@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { NavLink, Outlet } from "react-router";
 import Header from "./Header";
 import Footer from "./Footer";
@@ -23,10 +24,9 @@ function Layout() {
                   to={item.to}
                   end={item.to === "/"}
                   className={({ isActive }) =>
-                    `block px-4 py-2 text-sm ${
-                      isActive
-                        ? "bg-blue-100 text-blue-700 font-bold border-l-4 border-blue-500"
-                        : "text-gray-600 hover:bg-gray-200"
+                    `block px-4 py-2 text-sm ${isActive
+                      ? "bg-blue-100 text-blue-700 font-bold border-l-4 border-blue-500"
+                      : "text-gray-600 hover:bg-gray-200"
                     }`
                   }
                 >
@@ -38,7 +38,9 @@ function Layout() {
         </nav>
 
         <main className="flex-1 overflow-y-auto">
-          <Outlet />
+          <Suspense fallback={<p className="p-6 text-gray-500">読み込み中...</p>}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
 
