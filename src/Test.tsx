@@ -12,8 +12,10 @@ function reducer(state: FormState, action: FormAction): FormState {
         case "error":
             return { message: action.message, submitCount: state.submitCount, isError: true };
         case "success":
-            const newSubmitCount = state.submitCount + 1;
-            return { message: "送信しました", submitCount: newSubmitCount, isError: false };
+            {
+                const newSubmitCount = state.submitCount + 1;
+                return { message: "送信しました", submitCount: newSubmitCount, isError: false };
+            }
     }
 }
 
@@ -21,6 +23,7 @@ function Test() {
 
     const [name, setName] = useState("");
     const [isCheck, setIsCheck] = useState(false);
+    const [shouldThrow, setShouldThrow] = useState(false); // Error Boundaryの確認用
     const [formState, dispatch] = useReducer(reducer, { message: "", submitCount: 0, isError: false });
 
     useEffect(() => {
@@ -43,6 +46,11 @@ function Test() {
 
         dispatch({ type: "success" });
         nameInputRef.current?.focus()
+    }
+
+    // レンダリング中にエラーを投げる(Error Boundaryが受け止められるのはこの種類のエラー)
+    if (shouldThrow) {
+        throw new Error("Error Boundaryの動作確認用のエラーです");
     }
 
     return (
@@ -71,6 +79,13 @@ function Test() {
                     <Wrapper />
                 </MessageContext.Provider>
                 <p className="text-xs text-gray-500">経過時間: {elapsedSeconds}秒</p>
+                <button
+                    type="button"
+                    onClick={() => setShouldThrow(true)}
+                    className="self-start border border-red-300 text-red-600 px-3 py-1.5 rounded-md text-sm hover:bg-red-50"
+                >
+                    エラーを発生させる(Error Boundaryの確認用)
+                </button>
             </form>
         </div>
     );

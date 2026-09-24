@@ -9,6 +9,29 @@ Gemini API を使ったAIチャットアプリです。React + TypeScript + Vite
 - **function calling**: LLMが関数呼び出しを判断し、実行結果をもとに最終回答を生成するAPI(`/api/fc`、テストスクリプト: [server/test-function.js](server/test-function.js))
 - **利用トークン・コストのログ記録**: `usageMetadata`をもとに入出力トークン数とコスト(USD)を算出・記録する`calculateCost`/`logUsage`(`server/server.js`)
 
+## 画面構成(フロントエンド)
+
+| URL | ページ | 内容 |
+| --- | --- | --- |
+| `/` | チャット([src/App.tsx](src/App.tsx)) | 会話履歴付きのストリーミングチャット。function calling実行中は「ツール実行中」を表示 |
+| `/structured` | [src/StructuredTest.tsx](src/StructuredTest.tsx) | structured output(JSON応答)の動作確認 |
+| `/test` | [src/Test.tsx](src/Test.tsx) | フォーム・useReducer・Context・カスタムフックの練習用ページ。Error Boundaryの動作確認ボタンあり |
+| `/tanstack` | [src/TanStackQueryTest.tsx](src/TanStackQueryTest.tsx) | TanStack Queryのキャッシュ(staleTime)・楽観的更新・URLクエリによる並び替えの動作確認 |
+
+## フロントエンドの設計
+
+- **ルーティング**: React Router。ルート定義は[src/AppRoutes.tsx](src/AppRoutes.tsx)、共通レイアウト(ヘッダー・サイドメニュー・フッター)は[src/Layout.tsx](src/Layout.tsx)
+- **スタイリング**: Tailwind CSS v4。Viteのひな形由来の基本スタイル([src/index.css](src/index.css))は`@layer base`に置き、Tailwindのクラスが優先されるようにしている
+- **コード分割**: チャット以外のページは`React.lazy` + `Suspense`で、開いたときに読み込む。初回に読み込むJSを276.65 kB → 234.88 kB(約15%)削減
+- **エラーハンドリング**:
+  - 画面のレンダリング中のエラーは、ページ単位のError Boundary([src/ErrorBoundary.tsx](src/ErrorBoundary.tsx))で受け止める。エラー時もヘッダー・メニューは残り、「再試行」またはページ移動で復帰できる
+  - API通信のエラーは、送信処理(`handleSend`)内の`try-catch`で処理し、チャット上に「エラーが発生しました」と表示する
+- **パフォーマンス**(React Developer ToolsのProfilerで計測したうえで対応):
+  - 入力中の文字(`input`)のstateを[src/ChatForm.tsx](src/ChatForm.tsx)に閉じ込め(state colocation)、1文字入力するたびにApp全体が再レンダリングされないようにした
+  - メッセージ一覧([src/MessageList.tsx](src/MessageList.tsx))は`React.memo`で、入力中の不要な再レンダリングを防止
+  - React Compilerは未導入のため、必要な箇所のみ手動でメモ化している
+- **ツール実行中の表示**: サーバーは、function calling実行中にNUL文字(`\u0000`)で囲んだ`TOOL_CALL:関数名`を本文に混ぜて送信し、フロントでこれを取り除いて「ツール実行中」の表示に使っている
+
 ## セットアップ
 
 ### 1. 依存パッケージのインストール
@@ -40,6 +63,14 @@ node server.js
 # フロントエンド(別ターミナルでルートから)
 npm run dev
 ```
+
+### 4. 静的解析
+
+```bash
+npm run lint
+```
+
+ESLint(`react-hooks`のルールを含む)でコードをチェックします。コミット前の実行を推奨します。
 
 ## API エンドポイント(`server/server.js`)
 
@@ -76,69 +107,9 @@ node rag-prototype.js
 
 `MIN_SCORE`・`GAP_THRESHOLD`は、現時点では少数のテストサンプルから決めた暫定値です。実データが増えた際は、値の見直しが必要です。
 
-## React Compiler
+## 今後の改善候補
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
-```
-
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
-```
+- ストリーミングの本文とツール実行情報を、NUL文字区切りではなくJSON Lines / SSEのイベント種別で分けて送る
+- メッセージの`key`を配列の番号ではなく、メッセージごとのIDにする
+- GitHub Actionsで`npm run lint`とビルドをPRごとに自動実行する
+- テストコード(Vitest)を追加する

@@ -1,7 +1,8 @@
 import { Suspense } from "react";
-import { NavLink, Outlet } from "react-router";
+import { NavLink, Outlet, useLocation } from "react-router";
 import Header from "./Header";
 import Footer from "./Footer";
+import ErrorBoundary from "./ErrorBoundary";
 
 const navItems = [
   { to: "/", label: "チャット" },
@@ -11,6 +12,7 @@ const navItems = [
 ];
 
 function Layout() {
+  const location = useLocation();
   return (
     <div className="min-h-screen flex flex-col">
       <Header />
@@ -38,9 +40,12 @@ function Layout() {
         </nav>
 
         <main className="flex-1 overflow-y-auto">
-          <Suspense fallback={<p className="p-6 text-gray-500">読み込み中...</p>}>
-            <Outlet />
-          </Suspense>
+          {/* ページ移動(URLの変化)でエラー状態をリセットする */}
+          <ErrorBoundary resetKey={location.pathname}>
+            <Suspense fallback={<p className="p-6 text-gray-500">読み込み中...</p>}>
+              <Outlet />
+            </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
 
