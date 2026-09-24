@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { Message } from "./message";
 
 type Props = {
@@ -6,7 +7,7 @@ type Props = {
 
 function MessageList({ messages }: Props) {
   return (
-    <div className="flex flex-col gap-2 mb-5 max-h-[400px] overflow-y-auto">
+    <div className="flex flex-col gap-2 mb-5 max-h-100 overflow-y-auto">
       {messages.map((msg, idx) => (
         <div
           key={idx}
@@ -23,4 +24,4 @@ function MessageList({ messages }: Props) {
   );
 }
 
-export default MessageList;
+export default memo(MessageList);
