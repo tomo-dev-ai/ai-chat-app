@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import {
   QueryClient,
@@ -91,16 +91,16 @@ function UserList() {
   const [searchParams, setSearchParams] = useSearchParams();
   const sort = searchParams.get("sort") || "asc";
 
+  const sortedUsers = useMemo(() => users
+    ? [...users].sort((a, b) => {
+      return sort === "asc"
+        ? a.name.localeCompare(b.name)
+        : b.name.localeCompare(a.name);
+    })
+    : users, [users, sort]);
+
   if (isLoading) return <p>読み込み中...</p>;
   if (error) return <p>エラーが発生しました</p>;
-
-  const sortedUsers = users
-    ? [...users].sort((a, b) =>
-      sort === "asc"
-        ? a.name.localeCompare(b.name)
-        : b.name.localeCompare(a.name)
-    )
-    : users;
 
   return (
     <div className="border border-gray-300 rounded-lg p-4 mb-4 bg-white">
@@ -108,8 +108,8 @@ function UserList() {
         <button
           onClick={() => setSearchParams({ sort: "asc" })}
           className={`px-3 py-1 rounded-md text-sm ${sort === "asc"
-              ? "bg-blue-100 text-blue-700 font-bold"
-              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            ? "bg-blue-100 text-blue-700 font-bold"
+            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
             }`}
         >
           昇順
@@ -117,8 +117,8 @@ function UserList() {
         <button
           onClick={() => setSearchParams({ sort: "desc" })}
           className={`px-3 py-1 rounded-md text-sm ${sort === "desc"
-              ? "bg-blue-100 text-blue-700 font-bold"
-              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            ? "bg-blue-100 text-blue-700 font-bold"
+            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
             }`}
         >
           降順
