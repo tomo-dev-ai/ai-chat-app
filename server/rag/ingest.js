@@ -9,6 +9,7 @@
 
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { chunkText } from "./chunker.js";
@@ -44,12 +45,14 @@ function getRetryWaitSeconds(err) {
 
 /**
  * 学習メモ特有のノイズを取り除き、chunker が扱いやすい形にそろえる
+ * - 冒頭の「AI開発学習メモ / 日付：…」の2行を削除(日付はファイル名から取り、全チャンクの先頭に付ける)
  * - 毎日同じ定型文(「このファイルはその日の…参照してください。」)を削除
  * - 「=====」で囲まれた大見出しを【】形式に変換(9/4〜9/8のメモには【】の見出しがないため)
  */
 export function cleanMemo(text) {
   return text
     .replace(/\r\n/g, "\n")
+    .replace(/^AI開発学習メモ\n日付：.*\n/, "")
     .replace(/このファイルはその日の学習内容のみを記録する日次メモです。[\s\S]*?参照してください。\n?/, "")
     .replace(/^=+\n(.+)\n=+$/gm, "【$1】");
 }
@@ -95,6 +98,14 @@ async function embedBatchWithRetry(ai, texts) {
   }
 }
 
+/**
+ * ファイル名(例:20260924_学習メモ.txt)から日付(例:2026-09-24)を取り出す
+ */
+export function dateFromFileName(fileName) {
+  const [, y, m, d] = fileName.match(/^(\d{4})(\d{2})(\d{2})_/);
+  return `${y}-${m}-${d}`;
+}
+
 async function main() {
   // ---- 設定の確認(足りなければ、何が足りないかを明示して止める) ----
   const dataDir = process.env.RAG_DATA_DIR;
@@ -114,13 +125,16 @@ async function main() {
   const chunks = [];
   for (const file of files) {
     const raw = await readFile(path.join(dataDir, file), "utf8");
+    const date = dateFromFileName(file);
     const fileChunks = chunkText(cleanMemo(raw));
     for (const chunk of fileChunks) {
       chunks.push({
         id: `${file}#${chunk.index}`, // どのファイルの何番目か(出典表示に使う)
         source: file,
+        date,
         heading: chunk.heading,
-        text: chunk.text,
+        // 先頭に日付を付けてからベクトル化する(「9/10に何を学んだ?」のような質問にも引っかかるように)
+        text: `日付：${date}\n${chunk.text}`,
       });
     }
     console.log(`${file}: ${fileChunks.length} チャンク`);
@@ -146,7 +160,7 @@ async function main() {
     chunks,
   };
   await writeFile(INDEX_PATH, JSON.stringify(index), "utf8");
-  console.log(`\n保存しました: ${INDEX_PATH.pathname}`);
+  console.log(`\n保存しました: ${fileURLToPath(INDEX_PATH)}`);
 }
 
 main().catch((err) => {
