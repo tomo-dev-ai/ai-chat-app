@@ -1,0 +1,36 @@
+# ai-chat-app の開発用データベース(PostgreSQL 18 + pgvector)
+#
+# 起動:   docker compose up -d
+# 停止:   docker compose down        (データはボリュームに残る)
+# 全削除: docker compose down -v     (データも消える。init.sql をやり直したいとき)
+#
+# パスワードなどは、このファイルと同じ場所の .env から読み込む(.env.example を参照)。
+
+services:
+  db:
+    # pgvector が最初から入った公式イメージ(中身は普通の PostgreSQL 18)
+    image: pgvector/pgvector:pg18
+    container_name: ai-chat-app-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rag}
+      POSTGRES_DB: ${POSTGRES_DB:-ragdb}
+      # パスワードは必須。.env に書かれていなければ、起動時にエラーで止める
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?.env に POSTGRES_PASSWORD を設定してください}
+    ports:
+      # 127.0.0.1 を付けて、このPCからの接続だけを受け付ける(同じWi-Fiの他の機器からは接続させない)
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # データの保存先。コンテナを作り直してもデータが消えないように、名前付きボリュームに置く
+      # (PostgreSQL 18 のイメージでは、/var/lib/postgresql をマウントするのが推奨)
+      - pgdata:/var/lib/postgresql
+      # 初回起動時(ボリュームが空のとき)だけ、このフォルダの .sql が自動で実行される
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # 「DBが接続を受け付けられる状態か」を定期的に確認する(docker compose ps で状態が見える)
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
