@@ -12,6 +12,3 @@ export const EMBEDDING_DIMENSIONS = 768;
 
 // 回答生成に使うモデル
 export const GENERATION_MODEL = "gemini-3.5-flash-lite";
-
-// ベクトルを保存するファイル(pgvectorに移行するまでの仮のVector DB)
-export const INDEX_PATH = new URL("./index.json", import.meta.url);

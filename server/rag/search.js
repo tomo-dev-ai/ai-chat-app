@@ -1,16 +1,16 @@
 // server/rag/search.js
 //
 // 目的:
-// 質問文を受け取り、index.json(ingest.jsで作った仮のVector DB)から近いチャンクを探し、
+// 質問文を受け取り、PostgreSQL(pgvector)から近いチャンクを探し、
 // それを根拠にGeminiで回答を生成する。回答には、どの学習メモを根拠にしたか(出典)を表示する。
 //
 // 実行方法(serverフォルダで):
 //   node rag/search.js "useCallbackが効かなかった原因は?"
 
-import { readFile } from "node:fs/promises";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
-import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, GENERATION_MODEL, INDEX_PATH } from "./config.js";
+import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, GENERATION_MODEL } from "./config.js";
+import { pool, toVector } from "./db.js";
 
 dotenv.config({ path: new URL("../.env", import.meta.url) });
 
@@ -25,35 +25,18 @@ const TOP_K = 4;
 // まだ7件しか試していないため、資料や質問の傾向が変わったら再調整すること。
 const MIN_SCORE = 0.65;
 
-// 2つのベクトルの類似度を -1〜1 で返す(1に近いほど意味が近い)
-function cosineSimilarity(vecA, vecB) {
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < vecA.length; i++) {
-    dot += vecA[i] * vecB[i];
-    normA += vecA[i] * vecA[i];
-    normB += vecB[i] * vecB[i];
-  }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
-// index.json を読み込み、取り込み時の設定と今の設定が一致しているかを確認する
-async function loadIndex() {
-  let raw;
-  try {
-    raw = await readFile(INDEX_PATH, "utf8");
-  } catch {
-    throw new Error("index.json がありません。先に `node rag/ingest.js` を実行してください");
-  }
-  const index = JSON.parse(raw);
-  if (index.model !== EMBEDDING_MODEL || index.dimensions !== EMBEDDING_DIMENSIONS) {
-    throw new Error(
-      `index.json の作成時の設定(${index.model} / ${index.dimensions}次元)と、` +
-        `今の設定(${EMBEDDING_MODEL} / ${EMBEDDING_DIMENSIONS}次元)が違います。ingest.js をやり直してください`
-    );
-  }
-  return index;
+// 質問ベクトルに近いチャンクを、PostgreSQL で上位 limit 件取り出す
+// <=> は pgvector の「コサイン距離」(0に近いほど似ている)。1 - 距離 = コサイン類似度
+async function searchChunks(queryVector, limit) {
+  const { rows } = await pool.query(
+    `SELECT id, source, heading, content AS text,
+            1 - (embedding <=> $1::vector) AS score
+       FROM chunks
+      ORDER BY embedding <=> $1::vector
+      LIMIT $2`,
+    [toVector(queryVector), limit]
+  );
+  return rows;
 }
 
 // 質問文をベクトル化する(取り込み時と同じモデル・次元数で、taskType だけ「質問」にする)
@@ -103,18 +86,17 @@ async function main() {
     throw new Error("server/.env に GEMINI_API_KEY を設定してください");
   }
 
-  const index = await loadIndex();
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-  // ---- Retrieval:質問に近いチャンクを上位 TOP_K 件探す ----
+  // ---- Retrieval:質問に近いチャンクを上位 TOP_K 件探す(計算と並べ替えはDBに任せる) ----
   const queryVector = await embedQuery(ai, query);
-  const ranked = index.chunks
-    .map((chunk) => ({ ...chunk, score: cosineSimilarity(queryVector, chunk.embedding) }))
-    .sort((a, b) => b.score - a.score);
-  const hits = ranked.slice(0, TOP_K);
+  const hits = await searchChunks(queryVector, TOP_K);
+  if (hits.length === 0) {
+    throw new Error("chunks テーブルが空です。先に `node rag/ingest.js` を実行してください");
+  }
 
   console.log(`質問: ${query}\n`);
-  console.log(`=== 検索結果(上位${TOP_K}件 / 全${index.chunks.length}件)===`);
+  console.log(`=== 検索結果(上位${TOP_K}件)===`);
   for (const hit of hits) {
     const preview = hit.text.replace(/\n/g, " ").slice(0, 50);
     console.log(`[${hit.score.toFixed(4)}] ${hit.id}  ${preview}…`);
@@ -137,7 +119,9 @@ async function main() {
   });
 }
 
-main().catch((err) => {
-  console.error("エラーが発生しました:", err.message);
-  process.exitCode = 1;
-});
+main()
+  .catch((err) => {
+    console.error("エラーが発生しました:", err.message);
+    process.exitCode = 1;
+  })
+  .finally(() => pool.end());

@@ -1,19 +1,19 @@
 // server/rag/ingest.js
 //
 // 目的:
-// 学習メモを読み込み → 前処理 → チャンク分割 → Embedding → index.json に保存する。
+// 学習メモを読み込み → 前処理 → チャンク分割 → Embedding → PostgreSQL(pgvector)に保存する。
 // 資料が増えたとき・変わったときに1回だけ実行する(質問のたびに実行するものではない)。
 //
 // 実行方法(serverフォルダで):
 //   node rag/ingest.js
 
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { chunkText } from "./chunker.js";
-import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, INDEX_PATH } from "./config.js";
+import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS } from "./config.js";
+import { pool, toVector } from "./db.js";
 
 // server/.env を読み込む(実行時のカレントディレクトリに関わらず、このファイルから見た場所で指定)
 dotenv.config({ path: new URL("../.env", import.meta.url) });
@@ -152,18 +152,33 @@ async function main() {
     console.log(`Embedding: ${i + batch.length} / ${chunks.length}`);
   }
 
-  // ---- 3. index.json に保存する ----
-  const index = {
-    model: EMBEDDING_MODEL,
-    dimensions: EMBEDDING_DIMENSIONS,
-    createdAt: new Date().toISOString(),
-    chunks,
-  };
-  await writeFile(INDEX_PATH, JSON.stringify(index), "utf8");
-  console.log(`\n保存しました: ${fileURLToPath(INDEX_PATH)}`);
+  // ---- 3. PostgreSQL に保存する(全件を入れ替える) ----
+  // トランザクション:「古いデータの削除」と「新しいデータの追加」をひとまとまりにする。
+  // 途中でエラーになったら ROLLBACK で取り消し、古いデータが残った状態に戻す。
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM chunks");
+    for (const chunk of chunks) {
+      await client.query(
+        `INSERT INTO chunks (id, source, date, heading, content, embedding)
+         VALUES ($1, $2, $3, $4, $5, $6::vector)`,
+        [chunk.id, chunk.source, chunk.date, chunk.heading, chunk.text, toVector(chunk.embedding)]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release(); // 借りた接続を Pool に返す
+  }
+  console.log(`\nPostgreSQL の chunks テーブルに ${chunks.length} 件を保存しました`);
 }
 
-main().catch((err) => {
-  console.error("取り込みに失敗しました:", err.message);
-  process.exitCode = 1; // 失敗したことを、呼び出し元(ターミナルやCI)に伝える
-});
+main()
+  .catch((err) => {
+    console.error("取り込みに失敗しました:", err.message);
+    process.exitCode = 1; // 失敗したことを、呼び出し元(ターミナルやCI)に伝える
+  })
+  .finally(() => pool.end()); // 接続をすべて閉じる(閉じないとプロセスが終了しない)
