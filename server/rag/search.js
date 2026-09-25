@@ -8,11 +8,8 @@
 //   node rag/search.js "useCallbackが効かなかった原因は?"
 
 import { GoogleGenAI } from "@google/genai";
-import dotenv from "dotenv";
 import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, GENERATION_MODEL } from "./config.js";
-import { pool, toVector } from "./db.js";
-
-dotenv.config({ path: new URL("../.env", import.meta.url) });
+import { pool, toVector } from "./db.js"; // server/.env もここで読み込まれる
 
 // 回答の根拠としてGeminiに渡すチャンクの件数(Top-K)
 const TOP_K = 4;

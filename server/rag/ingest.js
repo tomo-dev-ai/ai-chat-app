@@ -10,13 +10,11 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
-import dotenv from "dotenv";
 import { chunkText } from "./chunker.js";
 import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS } from "./config.js";
 import { pool, toVector } from "./db.js";
 
-// server/.env を読み込む(実行時のカレントディレクトリに関わらず、このファイルから見た場所で指定)
-dotenv.config({ path: new URL("../.env", import.meta.url) });
+// ※ server/.env は db.js を import した時点で読み込まれる
 
 // 取り込み対象のファイル名(例:20260924_学習メモ.txt)
 const FILE_PATTERN = /^\d{8}_学習メモ\.txt$/;

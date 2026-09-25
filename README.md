@@ -8,6 +8,7 @@ Gemini API を使ったAIチャットアプリです。React + TypeScript + Vite
 - **structured output**: `responseSchema`によるJSON形式での応答生成(テストページ: [src/StructuredTest.tsx](src/StructuredTest.tsx)、テストスクリプト: [server/test-structured.js](server/test-structured.js))
 - **function calling**: LLMが関数呼び出しを判断し、実行結果をもとに最終回答を生成するAPI(`/api/fc`、テストスクリプト: [server/test-function.js](server/test-function.js))
 - **利用トークン・コストのログ記録**: `usageMetadata`をもとに入出力トークン数とコスト(USD)を算出・記録する`calculateCost`/`logUsage`(`server/server.js`)
+- **RAG(学習メモ検索)**: 自分の学習メモを分割・ベクトル化してPostgreSQL(pgvector)に保存し、質問に対して出典つきで回答するコマンドラインツール(`server/rag/`、詳細は[後述](#rag学習メモ検索serverrag))
 
 ## 画面構成(フロントエンド)
 
@@ -47,10 +48,13 @@ npm install
 
 ### 2. 環境変数の設定
 
-`server/.env` に Gemini API キーを設定します(`.env`はgitignore対象です)。
+`server/.env.example` をコピーして `server/.env` を作り、値を設定します(`.env`はgitignore対象です)。
 
 ```
 GEMINI_API_KEY=your-api-key-here
+# 以下はRAG機能を使う場合のみ
+RAG_DATA_DIR=C:\work\学習\202609
+DATABASE_URL=postgres://rag:パスワード@127.0.0.1:5432/ragdb
 ```
 
 ### 3. 起動
@@ -107,9 +111,76 @@ node rag-prototype.js
 
 `MIN_SCORE`・`GAP_THRESHOLD`は、現時点では少数のテストサンプルから決めた暫定値です。実データが増えた際は、値の見直しが必要です。
 
+## RAG(学習メモ検索、`server/rag/`)
+
+自分の学習メモ(`YYYYMMDD_学習メモ.txt`)を検索対象にして、「useCallbackが効かなかった原因は?」のような質問に、**根拠となったメモの出典つき**で回答するコマンドラインツールです。
+
+### 構成
+
+```mermaid
+flowchart LR
+  subgraph 取り込み["取り込み(ingest.js / 資料が変わったときに1回)"]
+    A[学習メモ .txt] --> B[前処理<br/>定型文の除去・見出しの統一]
+    B --> C[chunker.js<br/>見出し→行→句点で分割<br/>+オーバーラップ]
+    C --> D[Gemini Embedding<br/>768次元]
+  end
+  D --> E[(PostgreSQL + pgvector<br/>chunks テーブル)]
+  subgraph 検索["検索(search.js / 質問のたび)"]
+    Q[質問] --> F[Gemini Embedding]
+    F --> G[SQLでコサイン距離が<br/>近い順に上位4件]
+    G --> H{1位のスコア<br/>≥ 0.65 ?}
+    H -- No --> I[関連資料なしと回答]
+    H -- Yes --> J[Geminiで回答生成<br/>出典番号つき]
+  end
+  E --> G
+```
+
+| ファイル | 役割 |
+| --- | --- |
+| [server/rag/chunker.js](server/rag/chunker.js) | 文章をチャンクに分割する(ファイル・APIに依存しない純粋な関数。単体テストあり) |
+| [server/rag/ingest.js](server/rag/ingest.js) | 学習メモの読み込み → 前処理 → 分割 → Embedding → DBに保存 |
+| [server/rag/search.js](server/rag/search.js) | 質問をEmbedding → pgvectorで検索 → 出典つきで回答生成 |
+| [server/rag/db.js](server/rag/db.js) | PostgreSQLへの接続(Pool) |
+| [server/rag/config.js](server/rag/config.js) | 取り込みと検索で共通の設定(モデル名・次元数) |
+| [compose.yaml](compose.yaml) / [db/init/01_schema.sql](db/init/01_schema.sql) | 開発用DB(PostgreSQL 18 + pgvector)の起動設定とテーブル定義 |
+
+### セットアップと実行
+
+```bash
+# 1. 開発用DBの起動(Docker Desktopが必要。初回のみ .env.example をコピーして .env を作り、POSTGRES_PASSWORD を設定)
+docker compose up -d
+
+# 2. 学習メモの取り込み(server/.env に RAG_DATA_DIR と DATABASE_URL が必要)
+cd server
+node rag/ingest.js
+
+# 3. 質問する
+node rag/search.js "useCallbackが効かなかった原因は?"
+
+# 単体テスト(chunker.js)
+npm test
+```
+
+### 設計上の判断
+
+- **チャンク分割**: まず【見出し】単位で分け、400文字を超える部分だけ「行 → 句点 → 文字数」の順で細かく切る(再帰的分割)。各チャンクの先頭に日付と見出しを付け、同じ見出し内では前のチャンクの末尾60文字を重ねて、文脈の切れ目を和らげている
+- **ノイズの除去**: 各メモ冒頭の「タイトル・日付」だけの短いチャンクが、無関係な質問で上位に来てしまったため、取り込み時に除外し、日付は全チャンクの先頭に付ける形に変更した
+- **Embeddingの次元数**: `gemini-embedding-001`の既定は3072次元だが、768次元に縮めている(保存サイズと計算量が1/4になり、pgvectorのHNSWインデックスの上限である2000次元にも収まるため)。取り込み時は`RETRIEVAL_DOCUMENT`、質問時は`RETRIEVAL_QUERY`を指定
+- **関連資料なしの判定(ハルシネーション対策)**: 1位のスコアが`MIN_SCORE`(0.65)未満なら回答を生成しない。値は7つの質問の実測値(関連: 0.72〜0.75、無関係: 0.57〜0.60)の中間から決めた。さらにプロンプトでも「資料にないことは推測しない」と指示する2段構え
+- **APIの回数制限**: Embeddingの無料枠は「1分あたり100件」で、まとめて送っても件数で数えられる。429エラーのときだけ、エラーに含まれる待ち時間だけ待って最大3回再試行する(認証エラーなど、待っても直らないエラーは再試行しない)
+- **DBへの保存**: 「全件削除 → 全件追加」をトランザクションで行い、途中で失敗しても中途半端なデータが残らないようにしている
+- **セキュリティ**: 学習メモの本文はリポジトリに含めず、読み込み先は`.env`で指定する。開発用DBは`127.0.0.1`でのみ待ち受ける
+
+### 既知の制約
+
+- 「9月10日には何を学んだ?」のような日付を指定した質問は、ベクトル検索だけでは日付を厳密に照合できない(`date`列での絞り込みは未実装)
+- 取り込みは毎回全件をEmbeddingし直す(内容が変わっていないチャンクのベクトルは再利用していない)
+- 現時点ではコマンドラインのみで、チャット画面(`/api/...`)からは使えない
+
 ## 今後の改善候補
 
 - ストリーミングの本文とツール実行情報を、NUL文字区切りではなくJSON Lines / SSEのイベント種別で分けて送る
 - メッセージの`key`を配列の番号ではなく、メッセージごとのIDにする
 - GitHub Actionsで`npm run lint`とビルドをPRごとに自動実行する
-- テストコード(Vitest)を追加する
+- テストコード(Vitest)を追加する(RAGの`chunker.js`は`node:test`でテスト済み)
+- RAG: 質問から日付を取り出して`WHERE date = ...`で絞り込む、変更のないチャンクのEmbeddingを再利用する、チャット画面から使えるAPIにする
