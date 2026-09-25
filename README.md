@@ -8,13 +8,14 @@ Gemini API を使ったAIチャットアプリです。React + TypeScript + Vite
 - **structured output**: `responseSchema`によるJSON形式での応答生成(テストページ: [src/StructuredTest.tsx](src/StructuredTest.tsx)、テストスクリプト: [server/test-structured.js](server/test-structured.js))
 - **function calling**: LLMが関数呼び出しを判断し、実行結果をもとに最終回答を生成するAPI(`/api/fc`、テストスクリプト: [server/test-function.js](server/test-function.js))
 - **利用トークン・コストのログ記録**: `usageMetadata`をもとに入出力トークン数とコスト(USD)を算出・記録する`calculateCost`/`logUsage`(`server/server.js`)
-- **RAG(学習メモ検索)**: 自分の学習メモを分割・ベクトル化してPostgreSQL(pgvector)に保存し、質問に対して出典つきで回答するコマンドラインツール(`server/rag/`、詳細は[後述](#rag学習メモ検索serverrag))
+- **RAG(学習メモ検索)**: 自分の学習メモを分割・ベクトル化してPostgreSQL(pgvector)に保存し、質問に対して出典つきで回答する(画面: `/rag`、API: `/api/rag/search`、コマンドライン版もあり。詳細は[後述](#rag学習メモ検索serverrag))
 
 ## 画面構成(フロントエンド)
 
 | URL | ページ | 内容 |
 | --- | --- | --- |
 | `/` | チャット([src/App.tsx](src/App.tsx)) | 会話履歴付きのストリーミングチャット。function calling実行中は「ツール実行中」を表示 |
+| `/rag` | 学習メモ検索([src/RagSearch.tsx](src/RagSearch.tsx)) | 学習メモへの質問と、出典(ファイル名・見出し・スコア)の表示 |
 | `/structured` | [src/StructuredTest.tsx](src/StructuredTest.tsx) | structured output(JSON応答)の動作確認 |
 | `/test` | [src/Test.tsx](src/Test.tsx) | フォーム・useReducer・Context・カスタムフックの練習用ページ。Error Boundaryの動作確認ボタンあり |
 | `/tanstack` | [src/TanStackQueryTest.tsx](src/TanStackQueryTest.tsx) | TanStack Queryのキャッシュ(staleTime)・楽観的更新・URLクエリによる並び替えの動作確認 |
@@ -83,6 +84,7 @@ ESLint(`react-hooks`のルールを含む)でコードをチェックします�
 | `POST /api/chat` | 単発プロンプトに対する応答を返す |
 | `POST /api/chat/stream` | 会話履歴(`history`)とsystem promptをもとにストリーミング応答を返す |
 | `POST /api/json` | `responseSchema`を使い、structured output(JSON)を返す |
+| `POST /api/rag/search` | 学習メモのRAG検索。`{ query }`を受け取り、回答・出典・状態(`answered` / `no_notes_for_date` / `no_relevant_notes`)を返す。質問は空・500文字超を400で拒否 |
 | `POST /api/fc` | 会話履歴をもとにfunction callingを実行し、必要に応じて関数の実行結果を踏まえた最終回答を返す。トークン数・コストを含む`usage`情報も返す |
 
 いずれのエンドポイントも `usageMetadata` をもとにトークン数・コスト(USD)をサーバーログに出力します。
@@ -139,7 +141,8 @@ flowchart LR
 | --- | --- |
 | [server/rag/chunker.js](server/rag/chunker.js) | 文章をチャンクに分割する(ファイル・APIに依存しない純粋な関数。単体テストあり) |
 | [server/rag/ingest.js](server/rag/ingest.js) | 学習メモの読み込み → 前処理 → 分割 → Embedding → DBに保存 |
-| [server/rag/search.js](server/rag/search.js) | 質問をEmbedding → pgvectorで検索 → 出典つきで回答生成 |
+| [server/rag/service.js](server/rag/service.js) | 検索の本体。質問をEmbedding → pgvectorで検索 → 出典つきで回答生成し、結果を値として返す(画面表示やHTTPには依存しない) |
+| [server/rag/search.js](server/rag/search.js) | コマンドライン版。service.js を呼んで結果を表示するだけ |
 | [server/rag/query.js](server/rag/query.js) | 質問文から日付を取り出す(単体テストあり) |
 | [server/rag/db.js](server/rag/db.js) | PostgreSQLへの接続(Pool) |
 | [server/rag/config.js](server/rag/config.js) | 取り込みと検索で共通の設定(モデル名・次元数) |
@@ -171,6 +174,7 @@ npm test
 - **関連資料なしの判定(ハルシネーション対策)**: 1位のスコアが`MIN_SCORE`(0.65)未満なら回答を生成しない。値は7つの質問の実測値(関連: 0.72〜0.75、無関係: 0.57〜0.60)の中間から決めた。さらにプロンプトでも「資料にないことは推測しない」と指示する2段構え
 - **APIの回数制限**: Embeddingの無料枠は「1分あたり100件」で、まとめて送っても件数で数えられる。429エラーのときだけ、エラーに含まれる待ち時間だけ待って最大3回再試行する(認証エラーなど、待っても直らないエラーは再試行しない)
 - **日付での絞り込み(SQL+ベクトル検索の組み合わせ)**: ベクトル検索は「意味の近さ」で比べるため、「9月10日」と「2026-09-10」を厳密に照合できず、別の日のメモが上位に来ることがあった。質問から日付を取り出せた場合は`WHERE date = ...`で絞り込んでからベクトルの近さで並べ、その日のメモ全体(最大20件)を根拠にする。この場合は「その日のメモであること」自体が関連の根拠になるため、`MIN_SCORE`の判定は行わない
+- **処理の分離**: 検索の本体(`service.js`)は結果を値として返すだけにし、表示はコマンドライン版(`search.js`)、HTTPは`server.js`が担当する。同じ処理を両方から使い回せる。DB接続(Pool)は初めて使うときに作るため、`DATABASE_URL`が未設定でもチャット機能は起動できる
 - **DBへの保存**: 「全件削除 → 全件追加」をトランザクションで行い、途中で失敗しても中途半端なデータが残らないようにしている
 - **セキュリティ**: 学習メモの本文はリポジトリに含めず、読み込み先は`.env`で指定する。開発用DBは`127.0.0.1`でのみ待ち受ける
 
@@ -178,7 +182,8 @@ npm test
 
 - 日付での絞り込みは1日単位のみ(「先週」「9月前半」のような期間の指定には未対応)
 - 取り込みは毎回全件をEmbeddingし直す(内容が変わっていないチャンクのベクトルは再利用していない)
-- 現時点ではコマンドラインのみで、チャット画面(`/api/...`)からは使えない
+- 「9月に学習したことを総括して」のような**全体の要約**には答えられない。ベクトル検索は質問に近い上位4件しか渡さないため、一部の日の内容だけで回答してしまう(RAGは「どこかに書いてある答えを探す」用途向き)
+- 回答はGeminiがMarkdown形式で返すが、`/rag`の画面ではMarkdownとして整形せず、そのまま表示している
 
 ## 今後の改善候補
 
@@ -186,4 +191,5 @@ npm test
 - メッセージの`key`を配列の番号ではなく、メッセージごとのIDにする
 - GitHub Actionsで`npm run lint`とビルドをPRごとに自動実行する
 - テストコード(Vitest)を追加する(RAGの`chunker.js`は`node:test`でテスト済み)
-- RAG: 期間での絞り込み、変更のないチャンクのEmbeddingを再利用する、チャット画面から使えるAPIにする
+- RAG: 期間での絞り込み、変更のないチャンクのEmbeddingを再利用する、回答のMarkdown表示
+- RAG: 質問の種類(検索/総括)をLLMに判定させて処理を切り替える(総括は期間で絞って全件を渡す、または日ごとの要約をまとめる)

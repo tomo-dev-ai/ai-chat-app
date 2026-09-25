@@ -12,7 +12,7 @@ import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
 import { chunkText } from "./chunker.js";
 import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS } from "./config.js";
-import { pool, toVector } from "./db.js";
+import { getPool, closePool, toVector } from "./db.js";
 
 // ※ server/.env は db.js を import した時点で読み込まれる
 
@@ -153,7 +153,7 @@ async function main() {
   // ---- 3. PostgreSQL に保存する(全件を入れ替える) ----
   // トランザクション:「古いデータの削除」と「新しいデータの追加」をひとまとまりにする。
   // 途中でエラーになったら ROLLBACK で取り消し、古いデータが残った状態に戻す。
-  const client = await pool.connect();
+  const client = await getPool().connect();
   try {
     await client.query("BEGIN");
     await client.query("DELETE FROM chunks");
@@ -179,4 +179,4 @@ main()
     console.error("取り込みに失敗しました:", err.message);
     process.exitCode = 1; // 失敗したことを、呼び出し元(ターミナルやCI)に伝える
   })
-  .finally(() => pool.end()); // 接続をすべて閉じる(閉じないとプロセスが終了しない)
+  .finally(() => closePool()); // 接続をすべて閉じる(閉じないとプロセスが終了しない)

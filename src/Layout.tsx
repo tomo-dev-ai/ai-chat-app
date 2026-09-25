@@ -6,6 +6,7 @@ import ErrorBoundary from "./ErrorBoundary";
 
 const navItems = [
   { to: "/", label: "チャット" },
+  { to: "/rag", label: "学習メモ検索" },
   { to: "/structured", label: "Structured" },
   { to: "/test", label: "Test" },
   { to: "/tanstack", label: "TanStack Query" },

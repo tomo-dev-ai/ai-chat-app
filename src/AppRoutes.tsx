@@ -8,6 +8,7 @@ import App from "./App";
 const StructuredTest = lazy(() => import("./StructuredTest"));
 const Test = lazy(() => import("./Test"));
 const TanStackQueryTest = lazy(() => import("./TanStackQueryTest"));
+const RagSearch = lazy(() => import("./RagSearch"));
 
 // アプリ全体のルーティング(どのURLでどのページを表示するか)
 function AppRoutes() {
@@ -18,6 +19,7 @@ function AppRoutes() {
         <Route path="/structured" element={<StructuredTest />} />
         <Route path="/test" element={<Test />} />
         <Route path="/tanstack" element={<TanStackQueryTest />} />
+        <Route path="/rag" element={<RagSearch />} />
       </Route>
     </Routes>
   );

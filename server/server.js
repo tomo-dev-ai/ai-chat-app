@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { askLearningNotes } from "./rag/service.js";
 
 // 実行時のカレントディレクトリに関わらず、必ず server/.env を読み込む
 dotenv.config({ path: new URL(".env", import.meta.url) });
@@ -344,6 +345,30 @@ app.post("/api/json", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.json({ error: "エラーが発生しました" });
+  }
+});
+
+// 学習メモのRAG検索(画面の「学習メモ検索」ページから呼ばれる)
+app.post("/api/rag/search", async (req, res) => {
+  // 入力チェックはサーバー側でも必ず行う(画面を通さずに直接POSTされることもあるため)
+  const query = typeof req.body.query === "string" ? req.body.query.trim() : "";
+  if (!query) {
+    return res.status(400).json({ error: "質問を入力してください。" });
+  }
+  if (query.length > 500) {
+    return res.status(400).json({ error: "質問は500文字以内で入力してください。" });
+  }
+
+  try {
+    const result = await askLearningNotes(query);
+    res.json(result);
+  } catch (err) {
+    console.error("[/api/rag/search]", err);
+    if (err.status === 429) {
+      return res.status(429).json({ error: "現在の利用枠が上限に達しています。1分ほど待ってから再度お試しください。" });
+    }
+    // DB未起動などの内部エラーの詳細は、画面には出さずサーバーのログにだけ残す
+    return res.status(500).json({ error: "検索中にエラーが発生しました。" });
   }
 });
 
