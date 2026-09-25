@@ -7,6 +7,8 @@ function InputBox({
 }) {
   return (
     <input
+      name="question"
+      aria-label="質問"
       value={input}
       onChange={(e) => setInput(e.target.value)}
       placeholder="質問を入力..."

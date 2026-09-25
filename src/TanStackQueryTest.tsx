@@ -134,6 +134,8 @@ function UserList() {
 
       <div className="flex gap-2 mb-3">
         <input
+          name="name"
+          aria-label="名前"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="名前を入力"

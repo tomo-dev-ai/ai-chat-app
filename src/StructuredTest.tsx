@@ -5,7 +5,7 @@ function StructuredTest() {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"stream" | "schema">("stream");
   const [raw, setRaw] = useState("");
-  const [json, setJson] = useState<any>(null);
+  const [json, setJson] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
 
   const callStreamAPI = async () => {
@@ -116,6 +116,8 @@ function StructuredTest() {
 
       {/* 入力欄 */}
       <input
+        name="text"
+        aria-label="文章"
         value={input}
         onChange={(e) => setInput(e.target.value)}
         placeholder="文章を入力"

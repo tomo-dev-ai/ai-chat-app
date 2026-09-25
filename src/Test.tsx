@@ -62,13 +62,14 @@ function Test() {
                     <input
                         ref={nameInputRef}
                         type="text"
+                        name="name"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         placeholder="名前を入力"
                         className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
                     />
                 </label>
-                <CheckboxField checked={isCheck} onChange={setIsCheck} label="利用規約に同意する" />
+                <CheckboxField name="agree" checked={isCheck} onChange={setIsCheck} label="利用規約に同意する" />
                 <button
                     type="submit"
                     className="self-start bg-blue-500 text-white px-4 py-2 rounded-md font-medium hover:bg-blue-600"
