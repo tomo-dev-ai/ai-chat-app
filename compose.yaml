@@ -3,6 +3,7 @@
 # 起動:   docker compose up -d
 # 停止:   docker compose down        (データはボリュームに残る)
 # 全削除: docker compose down -v     (データも消える。init.sql をやり直したいとき)
+# pgAdminも一緒に起動: docker compose --profile tools up -d   → ブラウザで http://localhost:5050
 #
 # パスワードなどは、このファイルと同じ場所の .env から読み込む(.env.example を参照)。
 
@@ -32,5 +33,31 @@ services:
       timeout: 3s
       retries: 10
 
+  # DBの中身をブラウザで確認するための管理ツール(必要なときだけ起動する)
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: ai-chat-app-pgadmin
+    # profiles を付けたサービスは、普段の `docker compose up -d` では起動しない。
+    # `docker compose --profile tools up -d` のときだけ起動する
+    profiles: ["tools"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
+      # 必須項目だが、下のデスクトップモードではログイン画面が出ないため実際には使わない。
+      # ここを「未設定ならエラー」にすると、pgAdminを使わない人の `docker compose up -d` まで止まってしまうので、既定値を入れておく
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      # 1人で使う開発用なので、デスクトップモード(pgAdminへのログイン画面なし)で起動する
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "127.0.0.1:5050:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      # 接続先(db)を最初から登録しておく
+      - ./db/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      db:
+        condition: service_healthy   # DBが接続を受け付けられる状態になってから起動する
+
 volumes:
   pgdata:
+  pgadmin-data:

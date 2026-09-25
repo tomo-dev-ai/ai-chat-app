@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "ai-chat-app-db",
+      "Group": "Servers",
+      "Host": "db",
+      "Port": 5432,
+      "MaintenanceDB": "ragdb",
+      "Username": "rag",
+      "SSLMode": "prefer"
+    }
+  }
+}
