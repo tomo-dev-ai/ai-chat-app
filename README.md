@@ -140,6 +140,7 @@ flowchart LR
 | [server/rag/chunker.js](server/rag/chunker.js) | 文章をチャンクに分割する(ファイル・APIに依存しない純粋な関数。単体テストあり) |
 | [server/rag/ingest.js](server/rag/ingest.js) | 学習メモの読み込み → 前処理 → 分割 → Embedding → DBに保存 |
 | [server/rag/search.js](server/rag/search.js) | 質問をEmbedding → pgvectorで検索 → 出典つきで回答生成 |
+| [server/rag/query.js](server/rag/query.js) | 質問文から日付を取り出す(単体テストあり) |
 | [server/rag/db.js](server/rag/db.js) | PostgreSQLへの接続(Pool) |
 | [server/rag/config.js](server/rag/config.js) | 取り込みと検索で共通の設定(モデル名・次元数) |
 | [compose.yaml](compose.yaml) / [db/init/01_schema.sql](db/init/01_schema.sql) | 開発用DB(PostgreSQL 18 + pgvector)の起動設定とテーブル定義 |
@@ -156,8 +157,9 @@ node rag/ingest.js
 
 # 3. 質問する
 node rag/search.js "useCallbackが効かなかった原因は?"
+node rag/search.js "9月10日には何を学んだ?"   # 日付を含む質問は、その日のメモに絞って検索
 
-# 単体テスト(chunker.js)
+# 単体テスト(chunker.js / query.js)
 npm test
 ```
 
@@ -168,12 +170,13 @@ npm test
 - **Embeddingの次元数**: `gemini-embedding-001`の既定は3072次元だが、768次元に縮めている(保存サイズと計算量が1/4になり、pgvectorのHNSWインデックスの上限である2000次元にも収まるため)。取り込み時は`RETRIEVAL_DOCUMENT`、質問時は`RETRIEVAL_QUERY`を指定
 - **関連資料なしの判定(ハルシネーション対策)**: 1位のスコアが`MIN_SCORE`(0.65)未満なら回答を生成しない。値は7つの質問の実測値(関連: 0.72〜0.75、無関係: 0.57〜0.60)の中間から決めた。さらにプロンプトでも「資料にないことは推測しない」と指示する2段構え
 - **APIの回数制限**: Embeddingの無料枠は「1分あたり100件」で、まとめて送っても件数で数えられる。429エラーのときだけ、エラーに含まれる待ち時間だけ待って最大3回再試行する(認証エラーなど、待っても直らないエラーは再試行しない)
+- **日付での絞り込み(SQL+ベクトル検索の組み合わせ)**: ベクトル検索は「意味の近さ」で比べるため、「9月10日」と「2026-09-10」を厳密に照合できず、別の日のメモが上位に来ることがあった。質問から日付を取り出せた場合は`WHERE date = ...`で絞り込んでからベクトルの近さで並べ、その日のメモ全体(最大20件)を根拠にする。この場合は「その日のメモであること」自体が関連の根拠になるため、`MIN_SCORE`の判定は行わない
 - **DBへの保存**: 「全件削除 → 全件追加」をトランザクションで行い、途中で失敗しても中途半端なデータが残らないようにしている
 - **セキュリティ**: 学習メモの本文はリポジトリに含めず、読み込み先は`.env`で指定する。開発用DBは`127.0.0.1`でのみ待ち受ける
 
 ### 既知の制約
 
-- 「9月10日には何を学んだ?」のような日付を指定した質問は、ベクトル検索だけでは日付を厳密に照合できない(`date`列での絞り込みは未実装)
+- 日付での絞り込みは1日単位のみ(「先週」「9月前半」のような期間の指定には未対応)
 - 取り込みは毎回全件をEmbeddingし直す(内容が変わっていないチャンクのベクトルは再利用していない)
 - 現時点ではコマンドラインのみで、チャット画面(`/api/...`)からは使えない
 
@@ -183,4 +186,4 @@ npm test
 - メッセージの`key`を配列の番号ではなく、メッセージごとのIDにする
 - GitHub Actionsで`npm run lint`とビルドをPRごとに自動実行する
 - テストコード(Vitest)を追加する(RAGの`chunker.js`は`node:test`でテスト済み)
-- RAG: 質問から日付を取り出して`WHERE date = ...`で絞り込む、変更のないチャンクのEmbeddingを再利用する、チャット画面から使えるAPIにする
+- RAG: 期間での絞り込み、変更のないチャンクのEmbeddingを再利用する、チャット画面から使えるAPIにする
