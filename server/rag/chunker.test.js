@@ -5,7 +5,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { splitSections } from "./chunker.js";
+import { splitSections, splitIntoPieces, chunkText } from "./chunker.js";
 
 test("【見出し】ごとにセクションに分かれる", () => {
   const text = "【A】\nあ\nい\n【B】\nう";
@@ -48,4 +48,48 @@ test("行の途中にある【】は見出しとして扱わない", () => {
   assert.deepEqual(splitSections(text), [
     { heading: "A", body: "これは【重要】な話\nです" },
   ]);
+});
+
+// ---- ステップ2・3:splitIntoPieces ----
+
+test("maxChars 以内の本文は、1ピースのまま", () => {
+  assert.deepEqual(splitIntoPieces("あいう\nえお", 10), ["あいう\nえお"]);
+});
+
+test("長い本文は、行の区切りで maxChars 以内にまとめ直す", () => {
+  // 各行4文字、改行込みで「4+1+4=9文字」までは1ピースに入る
+  const body = "ああああ\nいいいい\nうううう";
+  assert.deepEqual(splitIntoPieces(body, 10), ["ああああ\nいいいい", "うううう"]);
+});
+
+test("1行が長すぎる場合は「。」の直後で切る", () => {
+  const body = "あいうえお。かきくけこ。さしす";
+  assert.deepEqual(splitIntoPieces(body, 8), ["あいうえお。", "かきくけこ。", "さしす"]);
+});
+
+test("「。」がなく1文が長すぎる場合は、maxChars 文字ずつ機械的に切る", () => {
+  assert.deepEqual(splitIntoPieces("あいうえおかきくけこ", 4), ["あいうえ", "おかきく", "けこ"]);
+});
+
+// ---- ステップ4:chunkText ----
+
+test("短いセクションは1チャンクずつになり、先頭に見出しが付き、index は通し番号", () => {
+  const text = "【A】\nあ\n【B】\nい";
+  assert.deepEqual(chunkText(text), [
+    { index: 0, heading: "A", text: "【A】\nあ" },
+    { index: 1, heading: "B", text: "【B】\nい" },
+  ]);
+});
+
+test("同じセクション内の2つ目以降のチャンクは、直前の末尾 overlap 文字を先頭に重ねる", () => {
+  const text = "【A】\nああああ\nいいいい\nうううう";
+  const chunks = chunkText(text, { maxChars: 10, overlap: 2 });
+  assert.deepEqual(chunks.map((c) => c.text), [
+    "【A】\nああああ\nいいいい",
+    "【A】\nいい\nうううう", // 「いい」が前のチャンクの末尾2文字
+  ]);
+});
+
+test("見出しのない部分は、見出しを付けずに本文だけになる", () => {
+  assert.deepEqual(chunkText("前書き"), [{ index: 0, heading: null, text: "前書き" }]);
 });
