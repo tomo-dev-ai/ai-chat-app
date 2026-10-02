@@ -1,4 +1,5 @@
 import { memo } from "react";
+import MarkdownView from "./MarkdownView";
 import type { Message } from "./message";
 
 type Props = {
@@ -11,13 +12,14 @@ function MessageList({ messages }: Props) {
       {messages.map((msg, idx) => (
         <div
           key={idx}
-          className={`max-w-[75%] px-4 py-2 rounded-lg whitespace-pre-wrap ${
+          className={`max-w-[75%] px-4 py-2 rounded-lg ${
             msg.role === "user"
-              ? "self-end bg-blue-100 text-right"
+              ? "self-end bg-blue-100 text-right whitespace-pre-wrap"
               : "self-start bg-green-50 text-left"
           }`}
         >
-          {msg.content}
+          {/* ユーザーの入力はそのまま、AIの回答はMarkdownとして表示する */}
+          {msg.role === "user" ? msg.content : <MarkdownView>{msg.content}</MarkdownView>}
         </div>
       ))}
     </div>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import MarkdownView from "./MarkdownView";
 
 // サーバー(/api/rag/search)が返すデータの型
 type RagSource = {
@@ -93,7 +94,7 @@ function RagSearch() {
           <section className="bg-white border border-gray-200 rounded-lg p-4">
             <h3 className="text-sm font-bold text-gray-700 mb-2">回答</h3>
             {result.status === "answered" && (
-              <p className="text-sm whitespace-pre-wrap leading-relaxed">{result.answer}</p>
+              <MarkdownView>{result.answer ?? ""}</MarkdownView>
             )}
             {result.status === "no_notes_for_date" && (
               <p className="text-sm text-gray-600">{result.date} の学習メモは見つかりませんでした。</p>

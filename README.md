@@ -32,6 +32,7 @@ Gemini API を使ったAIチャットアプリです。React + TypeScript + Vite
   - 入力中の文字(`input`)のstateを[src/ChatForm.tsx](src/ChatForm.tsx)に閉じ込め(state colocation)、1文字入力するたびにApp全体が再レンダリングされないようにした
   - メッセージ一覧([src/MessageList.tsx](src/MessageList.tsx))は`React.memo`で、入力中の不要な再レンダリングを防止
   - React Compilerは未導入のため、必要な箇所のみ手動でメモ化している
+- **Markdown表示**: AIの回答は共通コンポーネント[src/MarkdownView.tsx](src/MarkdownView.tsx)(`react-markdown` + `@tailwindcss/typography`の`prose`)で表示し、チャットと`/rag`で見た目をそろえている。生のHTMLは描画しない(`rehype-raw`は使わない)ため、AIの出力にHTMLが混ざっても実行されない
 - **ツール実行中の表示**: サーバーは、function calling実行中にNUL文字(`\u0000`)で囲んだ`TOOL_CALL:関数名`を本文に混ぜて送信し、フロントでこれを取り除いて「ツール実行中」の表示に使っている
 
 ## セットアップ
@@ -183,7 +184,7 @@ npm test
 - 日付での絞り込みは1日単位のみ(「先週」「9月前半」のような期間の指定には未対応)
 - 取り込みは毎回全件をEmbeddingし直す(内容が変わっていないチャンクのベクトルは再利用していない)
 - 「9月に学習したことを総括して」のような**全体の要約**には答えられない。ベクトル検索は質問に近い上位4件しか渡さないため、一部の日の内容だけで回答してしまう(RAGは「どこかに書いてある答えを探す」用途向き)
-- 回答はGeminiがMarkdown形式で返すが、`/rag`の画面ではMarkdownとして整形せず、そのまま表示している
+- Markdownの太字が、日本語の記号の前後で効かない場合がある(例:`**チャンキング（Chunking）**について` は、閉じの`**`の直前が全角の記号、直後が文字のため、CommonMarkの仕様上、太字の終わりと認識されない)。`remark-cjk-friendly`で対応可能だが未導入
 
 ## 今後の改善候補
 
@@ -191,5 +192,5 @@ npm test
 - メッセージの`key`を配列の番号ではなく、メッセージごとのIDにする
 - GitHub Actionsで`npm run lint`とビルドをPRごとに自動実行する
 - テストコード(Vitest)を追加する(RAGの`chunker.js`は`node:test`でテスト済み)
-- RAG: 期間での絞り込み、変更のないチャンクのEmbeddingを再利用する、回答のMarkdown表示
+- RAG: 期間での絞り込み、変更のないチャンクのEmbeddingを再利用する
 - RAG: 質問の種類(検索/総括)をLLMに判定させて処理を切り替える(総括は期間で絞って全件を渡す、または日ごとの要約をまとめる)
