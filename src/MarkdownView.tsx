@@ -10,9 +10,12 @@ type Props = {
 // Tailwindは標準のスタイルをリセットする(Preflight)ため、見た目は @tailwindcss/typography の
 // prose クラスに任せる。react-markdown は既定で文字列中の生のHTMLを描画しないので、
 // AIの出力に <script> などが混ざっていても実行されない(XSS対策)。
+// prose はインラインコードの前後に「`」を飾りとして表示するため、prose-code:before/after で消している。
 function MarkdownView({ children, className = "" }: Props) {
   return (
-    <div className={`prose prose-sm max-w-none ${className}`}>
+    <div
+      className={`prose prose-sm max-w-none prose-code:before:content-none prose-code:after:content-none ${className}`}
+    >
       <ReactMarkdown>{children}</ReactMarkdown>
     </div>
   );

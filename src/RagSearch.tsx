@@ -6,16 +6,22 @@ type RagSource = {
   id: string;
   source: string;
   heading: string | null;
-  score: number;
+  score: number | null; // 総括型ではチャンクを検索しないので null
 };
 
 type RagResult = {
   query: string;
-  date: string | null;
-  status: "answered" | "no_notes_for_date" | "no_relevant_notes";
+  mode: "search" | "summary"; // 検索型 / 総括型(サーバー側でLLMが判定)
+  period: { from: string; to: string } | null;
+  status: "answered" | "no_notes_for_period" | "no_relevant_notes" | "too_many_notes";
   answer: string | null;
   sources: RagSource[];
 };
+
+// 期間を「2026-09-01 〜 2026-09-30」、1日だけなら「2026-09-10」の形で表示する
+function formatPeriod(period: { from: string; to: string }) {
+  return period.from === period.to ? period.from : `${period.from} 〜 ${period.to}`;
+}
 
 // 学習メモのRAG検索ページ
 function RagSearch() {
@@ -57,7 +63,7 @@ function RagSearch() {
     <div className="p-6 max-w-3xl text-left">
       <h2 className="text-xl font-bold mb-1">学習メモ検索(RAG)</h2>
       <p className="text-sm text-gray-500 mb-4">
-        学習メモの内容をもとに回答します。「9月10日には何を学んだ?」のように日付を含めると、その日のメモに絞って検索します。
+        学習メモの内容をもとに回答します。「9月10日には何を学んだ?」「9月に学んだことを総括して」のように日付や期間を含めると、そのメモに絞って回答します。
       </p>
 
       <form onSubmit={handleSubmit} className="flex gap-2 mb-4">
@@ -87,17 +93,27 @@ function RagSearch() {
 
       {result && (
         <div className="flex flex-col gap-4">
-          {result.date && (
-            <p className="text-xs text-gray-500">日付 {result.date} のメモに絞り込んで検索しました</p>
-          )}
+          <p className="text-xs text-gray-500">
+            {result.mode === "summary" ? "総括" : "検索"}
+            {result.period
+              ? ` ・ 期間 ${formatPeriod(result.period)} のメモが対象`
+              : result.mode === "summary"
+                ? " ・ すべてのメモが対象"
+                : ""}
+          </p>
 
           <section className="bg-white border border-gray-200 rounded-lg p-4">
             <h3 className="text-sm font-bold text-gray-700 mb-2">回答</h3>
             {result.status === "answered" && (
               <MarkdownView>{result.answer ?? ""}</MarkdownView>
             )}
-            {result.status === "no_notes_for_date" && (
-              <p className="text-sm text-gray-600">{result.date} の学習メモは見つかりませんでした。</p>
+            {result.status === "no_notes_for_period" && result.period && (
+              <p className="text-sm text-gray-600">{formatPeriod(result.period)} の学習メモは見つかりませんでした。</p>
+            )}
+            {result.status === "too_many_notes" && (
+              <p className="text-sm text-gray-600">
+                対象のメモが多すぎるため総括できませんでした。「9月」のように期間を絞って質問してください。
+              </p>
             )}
             {result.status === "no_relevant_notes" && (
               <p className="text-sm text-gray-600">
@@ -117,7 +133,9 @@ function RagSearch() {
                       {s.source}
                       {s.heading && <span className="text-gray-500"> 【{s.heading}】</span>}
                     </span>
-                    <span className="text-xs text-gray-400 tabular-nums">{s.score.toFixed(3)}</span>
+                    {s.score !== null && (
+                      <span className="text-xs text-gray-400 tabular-nums">{s.score.toFixed(3)}</span>
+                    )}
                   </li>
                 ))}
               </ol>

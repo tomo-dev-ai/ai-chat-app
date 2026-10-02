@@ -19,16 +19,22 @@ async function main() {
   const result = await askLearningNotes(query);
 
   console.log(`質問: ${result.query}\n`);
-  console.log(result.date ? `(日付 ${result.date} で絞り込み)` : "(日付での絞り込みなし)");
+  const periodText = result.period ? `${result.period.from} 〜 ${result.period.to}` : null;
+  console.log(`種類: ${result.mode === "summary" ? "総括型" : "検索型"}`);
+  console.log(periodText ? `(期間 ${periodText} で絞り込み)` : "(期間での絞り込みなし)");
 
-  if (result.status === "no_notes_for_date") {
-    console.log(`${result.date} の学習メモは見つかりませんでした。`);
+  if (result.status === "no_notes_for_period") {
+    console.log(`${periodText} の学習メモは見つかりませんでした。`);
+    return;
+  }
+  if (result.status === "too_many_notes") {
+    console.log("対象のメモが多すぎるため、総括できませんでした。期間を絞って質問してください。");
     return;
   }
 
-  console.log(`=== 検索結果(${result.sources.length}件)===`);
+  console.log(`=== 使った資料(${result.sources.length}件)===`);
   for (const s of result.sources) {
-    console.log(`[${s.score.toFixed(4)}] ${s.id}`);
+    console.log(s.score === null ? s.id : `[${s.score.toFixed(4)}] ${s.id}`);
   }
 
   if (result.status === "no_relevant_notes") {
