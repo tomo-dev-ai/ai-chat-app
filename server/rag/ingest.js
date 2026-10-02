@@ -17,7 +17,11 @@ import { getPool, closePool, toVector } from "./db.js";
 // ※ server/.env は db.js を import した時点で読み込まれる
 
 // 取り込み対象のファイル名(例:20260924_学習メモ.txt)
+// ※同じフォルダにある学習サマリー・復習まとめ(202609_学習サマリー.txt など)は対象外にする
 const FILE_PATTERN = /^\d{8}_学習メモ\.txt$/;
+
+// 月ごとのフォルダ名(例:202609)。RAG_DATA_DIR の直下にあるこの名前のフォルダの中も探す
+const MONTH_DIR_PATTERN = /^\d{6}$/;
 
 // 1回のAPI呼び出しでまとめてベクトル化する件数
 // ※無料枠の回数制限(1分あたり100件)は「API呼び出し回数」ではなく「ベクトル化した件数」で数えられる
@@ -97,6 +101,33 @@ async function embedBatchWithRetry(ai, texts) {
 }
 
 /**
+ * RAG_DATA_DIR の直下と、その中の月フォルダ(202609 など)から学習メモを探し、
+ * { file: ファイル名, fullPath: フルパス } の配列を、ファイル名(=日付)順で返す
+ *
+ *   C:\work\学習
+ *   ├─ 202609\20260904_学習メモ.txt   ← 対象
+ *   ├─ 202609\202609_学習サマリー.txt ← 対象外(ファイル名が FILE_PATTERN に一致しない)
+ *   └─ 202610\20261002_学習メモ.txt   ← 対象
+ */
+async function findMemoFiles(dataDir) {
+  const entries = await readdir(dataDir, { withFileTypes: true });
+  const dirs = [
+    dataDir,
+    ...entries.filter((e) => e.isDirectory() && MONTH_DIR_PATTERN.test(e.name)).map((e) => path.join(dataDir, e.name)),
+  ];
+
+  const found = [];
+  for (const dir of dirs) {
+    for (const name of await readdir(dir)) {
+      if (FILE_PATTERN.test(name)) {
+        found.push({ file: name, fullPath: path.join(dir, name) });
+      }
+    }
+  }
+  return found.sort((a, b) => a.file.localeCompare(b.file));
+}
+
+/**
  * ファイル名(例:20260924_学習メモ.txt)から日付(例:2026-09-24)を取り出す
  */
 export function dateFromFileName(fileName) {
@@ -115,14 +146,14 @@ async function main() {
   }
 
   // ---- 1. 学習メモを読み込んで、チャンクに分割する ----
-  const files = (await readdir(dataDir)).filter((name) => FILE_PATTERN.test(name)).sort();
+  const files = await findMemoFiles(dataDir);
   if (files.length === 0) {
-    throw new Error(`${dataDir} に学習メモ(YYYYMMDD_学習メモ.txt)が見つかりません`);
+    throw new Error(`${dataDir}(またはその中の月フォルダ)に学習メモ(YYYYMMDD_学習メモ.txt)が見つかりません`);
   }
 
   const chunks = [];
-  for (const file of files) {
-    const raw = await readFile(path.join(dataDir, file), "utf8");
+  for (const { file, fullPath } of files) {
+    const raw = await readFile(fullPath, "utf8");
     const date = dateFromFileName(file);
     const fileChunks = chunkText(cleanMemo(raw));
     for (const chunk of fileChunks) {
