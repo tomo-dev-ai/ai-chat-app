@@ -257,3 +257,39 @@ export async function askLearningNotes(query) {
   const answer = await generateAnswer(query, hits);
   return { ...base, status: "answered", answer, sources };
 }
+
+/**
+ * 学習メモを意味検索して、関連するチャンク(本文つき)をそのまま返す。回答文は生成しない。
+ * MCP Server など「呼び出す側が LLM」の場合に使う(回答文は呼び出し側の LLM が作るので、ここで Gemini に
+ * 回答させると LLM が2回動き、費用・時間・429 が増えるうえ、元の文章が呼び出し側から見えなくなる)
+ * @param {string} query 検索したい内容(自然文でよい)
+ * @param {{ period?: { from: string, to: string } | null, limit?: number }} [options]
+ * @returns {Promise<{
+ *   query: string,
+ *   period: { from: string, to: string } | null,
+ *   status: "found" | "no_notes_for_period" | "low_score",
+ *   hits: { id: string, source: string, heading: string | null, score: number, text: string }[]
+ * }>}
+ */
+export async function retrieveLearningNotes(query, { period = null, limit = TOP_K } = {}) {
+  const queryVector = await embedQuery(query);
+  const hits = await searchChunks(queryVector, limit, period);
+  const base = { query, period };
+
+  if (hits.length === 0) {
+    if (period) {
+      return { ...base, status: "no_notes_for_period", hits: [] };
+    }
+    throw new Error("chunks テーブルが空です。先に `node rag/ingest.js` を実行してください");
+  }
+
+  // 期間なしで1位のスコアが MIN_SCORE 未満のときも、本文はスコアつきで返し、status で「低スコア」と伝える。
+  // askLearningNotes では Gemini にハルシネーションさせないために切り捨てるが、こちらの呼び出し側は
+  // 本文を読める LLM なので、関係があるかどうかの判断を任せる。
+  // (2026-10-09:「パストラバーサル対策はどうした?」で該当チャンクが2位 0.6183 と基準未満だったため)
+  if (!period && hits[0].score < MIN_SCORE) {
+    return { ...base, status: "low_score", hits };
+  }
+
+  return { ...base, status: "found", hits };
+}

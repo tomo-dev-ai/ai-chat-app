@@ -3,7 +3,7 @@ import express from "express";
 import cors from "cors";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
-import { askLearningNotes } from "./rag/service.js";
+import { askLearningNotes, retrieveLearningNotes } from "./rag/service.js";
 
 // 実行時のカレントディレクトリに関わらず、必ず server/.env を読み込む
 dotenv.config({ path: new URL(".env", import.meta.url) });
@@ -368,6 +368,52 @@ app.post("/api/rag/search", async (req, res) => {
       return res.status(429).json({ error: "現在の利用枠が上限に達しています。1分ほど待ってから再度お試しください。" });
     }
     // DB未起動などの内部エラーの詳細は、画面には出さずサーバーのログにだけ残す
+    return res.status(500).json({ error: "検索中にエラーが発生しました。" });
+  }
+});
+
+// 学習メモの意味検索(検索だけ。回答文は生成しない)
+// MCP Server(learning-memo-mcp)など、呼び出す側が LLM の場合に使う
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const RETRIEVE_MAX_LIMIT = 20;
+
+app.post("/api/rag/retrieve", async (req, res) => {
+  const { query: rawQuery, from, to, limit: rawLimit } = req.body ?? {};
+
+  // ---- 入力チェック(呼び出し側が LLM でも、変な値が来る前提で確認する) ----
+  const query = typeof rawQuery === "string" ? rawQuery.trim() : "";
+  if (!query) {
+    return res.status(400).json({ error: "query を指定してください。" });
+  }
+  if (query.length > 500) {
+    return res.status(400).json({ error: "query は500文字以内で指定してください。" });
+  }
+
+  // 期間は from と to の両方を YYYY-MM-DD で指定したときだけ使う(片方だけはエラー)
+  let period = null;
+  if (from !== undefined || to !== undefined) {
+    if (typeof from !== "string" || typeof to !== "string" || !DATE_PATTERN.test(from) || !DATE_PATTERN.test(to)) {
+      return res.status(400).json({ error: "from と to は両方とも YYYY-MM-DD 形式で指定してください。" });
+    }
+    if (from > to) {
+      return res.status(400).json({ error: "from は to 以前の日付にしてください。" });
+    }
+    period = { from, to };
+  }
+
+  const limit = rawLimit === undefined ? 5 : rawLimit;
+  if (!Number.isInteger(limit) || limit < 1 || limit > RETRIEVE_MAX_LIMIT) {
+    return res.status(400).json({ error: `limit は 1〜${RETRIEVE_MAX_LIMIT} の整数で指定してください。` });
+  }
+
+  try {
+    const result = await retrieveLearningNotes(query, { period, limit });
+    res.json(result);
+  } catch (err) {
+    console.error("[/api/rag/retrieve]", err);
+    if (err.status === 429) {
+      return res.status(429).json({ error: "現在の利用枠が上限に達しています。1分ほど待ってから再度お試しください。" });
+    }
     return res.status(500).json({ error: "検索中にエラーが発生しました。" });
   }
 });
