@@ -9,6 +9,7 @@ Gemini API を使ったAIチャットアプリです。React + TypeScript + Vite
 - **function calling**: LLMが関数呼び出しを判断し、実行結果をもとに最終回答を生成するAPI(`/api/fc`、テストスクリプト: [server/test-function.js](server/test-function.js))
 - **利用トークン・コストのログ記録**: `usageMetadata`をもとに入出力トークン数とコスト(USD)を算出・記録する`calculateCost`/`logUsage`(`server/server.js`)
 - **RAG(学習メモ検索)**: 自分の学習メモを分割・ベクトル化してPostgreSQL(pgvector)に保存し、質問に対して出典つきで回答する(画面: `/rag`、API: `/api/rag/search`、コマンドライン版もあり。詳細は[後述](#rag学習メモ検索serverrag))
+- **検索専用API(MCP Server 連携)**: 回答文を生成せず、関連するチャンクだけを類似度つきで返す `/api/rag/retrieve`。自作の MCP Server [learning-memo-mcp](https://github.com/tomo-dev-ai/learning-memo-mcp) から呼ばれ、Claude Code などの AI Agent が学習メモを意味検索できる
 
 ## 画面構成(フロントエンド)
 
@@ -85,7 +86,8 @@ ESLint(`react-hooks`のルールを含む)でコードをチェックします�
 | `POST /api/chat` | 単発プロンプトに対する応答を返す |
 | `POST /api/chat/stream` | 会話履歴(`history`)とsystem promptをもとにストリーミング応答を返す |
 | `POST /api/json` | `responseSchema`を使い、structured output(JSON)を返す |
-| `POST /api/rag/search` | 学習メモのRAG検索。`{ query }`を受け取り、回答・出典・状態(`answered` / `no_notes_for_date` / `no_relevant_notes`)を返す。質問は空・500文字超を400で拒否 |
+| `POST /api/rag/search` | 学習メモのRAG検索。`{ query }`を受け取り、回答・出典・状態(`answered` / `no_notes_for_period` / `no_relevant_notes` / `too_many_notes`)を返す。質問は空・500文字超を400で拒否 |
+| `POST /api/rag/retrieve` | 学習メモの意味検索(検索だけ、回答文は生成しない)。`{ query, from?, to?, limit? }`を受け取り、チャンク(id・出典・見出し・類似度・本文)と状態(`found` / `low_score` / `no_notes_for_period`)を返す。`query`は空・500文字超、`from`/`to`は両方そろった`YYYY-MM-DD`以外・`from > to`、`limit`は1〜20の整数以外を400で拒否(既定5) |
 | `POST /api/fc` | 会話履歴をもとにfunction callingを実行し、必要に応じて関数の実行結果を踏まえた最終回答を返す。トークン数・コストを含む`usage`情報も返す |
 
 いずれのエンドポイントも `usageMetadata` をもとにトークン数・コスト(USD)をサーバーログに出力します。
@@ -147,7 +149,7 @@ flowchart LR
 | --- | --- |
 | [server/rag/chunker.js](server/rag/chunker.js) | 文章をチャンクに分割する(ファイル・APIに依存しない純粋な関数。単体テストあり) |
 | [server/rag/ingest.js](server/rag/ingest.js) | 学習メモの読み込み → 前処理 → 分割 → Embedding → DBに保存 |
-| [server/rag/service.js](server/rag/service.js) | 本体。期間の取り出し → 質問の種類の判定 → 検索型ならpgvectorで検索、総括型なら期間内を全件取得 → 出典つきで回答生成し、結果を値として返す(画面表示やHTTPには依存しない) |
+| [server/rag/service.js](server/rag/service.js) | 本体。期間の取り出し → 質問の種類の判定 → 検索型ならpgvectorで検索、総括型なら期間内を全件取得 → 出典つきで回答生成し、結果を値として返す(画面表示やHTTPには依存しない)。検索だけを行う `retrieveLearningNotes` も持つ(`/api/rag/retrieve` 用) |
 | [server/rag/search.js](server/rag/search.js) | コマンドライン版。service.js を呼んで結果を表示するだけ |
 | [server/rag/query.js](server/rag/query.js) | 質問文から日付・期間(範囲・1日・月)を取り出す(単体テストあり) |
 | [server/rag/db.js](server/rag/db.js) | PostgreSQLへの接続(Pool) |
@@ -186,12 +188,14 @@ npm test
 - **質問の種類の判定(検索型/総括型)**: ベクトル検索は「答えが書いてある場所を探す」のは得意だが、上位数件しか渡さないため「全体をまとめる」質問には向かない。そこで、Geminiのstructured output(`enum: ["search", "summary"]`、`temperature: 0`)で質問の種類を判定し、処理を切り替える。キーワード判定よりも言い回しの揺れに強い。判定に失敗したときは検索型として続ける(フォールバック)。代わりに、1回の質問でのAPI呼び出しが1回増える
 - **総括型の処理**: 期間内のチャンクを日付順・メモ内の順番どおりに**すべて**取り出し、1回でGeminiに渡して、テーマ別・日付つきで要約させる(stuff方式)。9月分(13日)で約4.5万文字と、モデルの入力上限に十分収まるため。`id`は文字列で`#10`が`#2`より先に並ぶため、`split_part(id, '#', 2)::int`で数値として並べる。本文が15万文字を超える場合は、期間を絞るよう案内する
 - **処理の分離**: 検索の本体(`service.js`)は結果を値として返すだけにし、表示はコマンドライン版(`search.js`)、HTTPは`server.js`が担当する。同じ処理を両方から使い回せる。DB接続(Pool)は初めて使うときに作るため、`DATABASE_URL`が未設定でもチャット機能は起動できる
+- **検索専用API(`/api/rag/retrieve`)を分けた理由**: 呼び出し側が LLM(MCP Server 経由の Claude など)の場合、`/api/rag/search`のようにここで Gemini に回答文を作らせると、LLM が2回動いて費用・時間・429が増え、元の文章も呼び出し側から見えなくなる。そのため、質問の種類の判定と回答生成を行わず、Embedding 1回+pgvector の検索だけでチャンクを返す。DBの接続情報と Gemini の API キーはこのサーバーにだけ置き、MCP Server には持たせない
+- **低スコアの扱いの違い**: `/api/rag/search`は1位のスコアが`MIN_SCORE`未満なら資料を切り捨てる(Gemini に関係の薄い資料から回答させないため)。`/api/rag/retrieve`は切り捨てずに類似度つきで返し、`status: "low_score"`で伝える(本文を読める呼び出し側の LLM に関係の有無を判断させるため)。きっかけは「パストラバーサル対策はどうした?」で、該当チャンクが2位・0.618と基準未満になったこと(1つのチャンクに複数の話題が混ざるため、1つの専門用語だけの質問は類似度が伸びにくい)
 - **DBへの保存**: 「全件削除 → 全件追加」をトランザクションで行い、途中で失敗しても中途半端なデータが残らないようにしている
 - **セキュリティ**: 学習メモの本文はリポジトリに含めず、読み込み先は`.env`で指定する。開発用DBは`127.0.0.1`でのみ待ち受ける
 
 ### 既知の制約
 
-- 「先週」「9月前半」のような、相対的・あいまいな期間の指定には未対応(範囲・1日・月のみ)
+- 「先週」「9月前半」のような、相対的・あいまいな期間の指定には未対応(範囲・1日・月のみ)。ただし`/api/rag/retrieve`は期間を`from`/`to`の日付で受け取るため、MCP Server 経由では呼び出し側の LLM が日付に直して渡せる
 - 取り込みは毎回全件をEmbeddingし直す(内容が変わっていないチャンクのベクトルは再利用していない)
 - 総括型は期間内の本文を1回で渡すため、本文が15万文字を超える期間(数か月分など)には答えられない
 - 学習メモを追加・修正したら、`node rag/ingest.js`で取り込み直すまで検索・総括に反映されない
